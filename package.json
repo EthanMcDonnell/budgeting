@@ -1,0 +1,48 @@
+{
+  "name": "budgeting",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first personal budgeting dashboard with a Claude MCP importer",
+  "type": "module",
+  "scripts": {
+    "start": "vite build && tsx src/server/index.ts",
+    "serve": "tsx src/server/index.ts",
+    "dev": "concurrently -k -n api,web -c blue,magenta \"tsx watch src/server/index.ts\" \"vite\"",
+    "build": "vite build",
+    "mcp": "tsx src/mcp/launcher.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "demo": "tsx scripts/demo.ts && vite build && BUDGET_DB=data/demo.db tsx src/server/index.ts",
+    "screenshots": "tsx scripts/screenshots.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/instrument-sans": "^5.3.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.3.0",
+    "lucide-react": "^1.54.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router-dom": "^7.18.4",
+    "recharts": "^3.10.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "playwright-core": "^1.49.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.3"
+  },
+  "allowScripts": {
+    "better-sqlite3@13.0.3": true,
+    "esbuild@0.28.2": true
+  }
+}

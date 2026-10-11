@@ -1,0 +1,29 @@
+node_modules/
+dist/
+web/dist/
+
+# Your data: the database, backups, data/context.md, screenshots. Never commit (applies to everyone who clones this)
+data/
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+statements/
+*.pdf
+*.csv
+*.tsv
+*.xls
+*.xlsx
+*.qif
+*.qfx
+*.ofx
+!tests/fixtures/*.csv
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+.DS_Store
+.env
+.env.*
