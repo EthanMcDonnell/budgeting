@@ -55,7 +55,7 @@ export default function Transactions({ meta }: { meta: Meta | null }) {
   const payeeName = payee ? rows.find((r) => String(r.payee_id) === payee)?.merchant ?? 'selected payee' : null;
   const buckets = meta?.buckets ?? [];
   const bucketIndex = buckets.findIndex((b) => String(b.id) === bucket);
-  const bucketName = bucket ? buckets[bucketIndex]?.name ?? 'Bucket' : null;
+  const bucketName = buckets[bucketIndex]?.name ?? null;
   // With a bucket chosen, the category list narrows to the categories in it.
   const shownCategories = bucket ? categories.filter((c) => String(c.bucket_id) === bucket) : categories;
 
@@ -98,7 +98,7 @@ export default function Transactions({ meta }: { meta: Meta | null }) {
         <input className="input" type="search" placeholder="Search description, merchant, notes" value={search}
           onChange={(e) => setSearch(e.target.value)} aria-label="Search transactions" />
         <select className="select" value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Filter by category">
-          <option value="">{bucketName ? `All of ${bucketName}` : 'All categories'}</option>
+          <option value="">{bucketName ? `All in ${bucketName}` : 'All categories'}</option>
           {!bucket && <option value="uncategorized">Uncategorised</option>}
           {shownCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
@@ -108,18 +108,17 @@ export default function Transactions({ meta }: { meta: Meta | null }) {
             {meta!.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         )}
-        {bucketName && (
-          <span className="badge filter-chip" title={shownCategories.map((c) => c.name).join(', ')}>
+        {bucket && (
+          <span className="badge filter-chip" title={shownCategories.length ? shownCategories.map((c) => c.name).join(', ') : 'No categories'}>
             <i className="swatch" style={{ background: bucketColor(Math.max(bucketIndex, 0)), borderRadius: 99 }} />
-            <b>{bucketName}</b>
-            <span className="muted">{shownCategories.length ? shownCategories.map((c) => c.name).join(', ') : 'no categories'}</span>
-            <button className="btn btn-ghost btn-icon btn-sm" style={{ height: 18, width: 18 }} onClick={() => setBucket('')} aria-label={`Stop filtering by the ${bucketName} bucket`}><X size={12} /></button>
+            {bucketName ?? 'Bucket'}
+            <button className="btn btn-ghost btn-icon btn-sm" onClick={() => setBucket('')} aria-label={`Stop filtering by the ${bucketName ?? 'selected'} bucket`}><X size={14} /></button>
           </span>
         )}
         {payeeName && (
           <span className="badge filter-chip">
             {payeeName}
-            <button className="btn btn-ghost btn-icon btn-sm" style={{ height: 18, width: 18 }} onClick={() => setPayee('')} aria-label={`Stop filtering by ${payeeName}`}><X size={12} /></button>
+            <button className="btn btn-ghost btn-icon btn-sm" onClick={() => setPayee('')} aria-label={`Stop filtering by ${payeeName}`}><X size={12} /></button>
           </span>
         )}
       </div>
