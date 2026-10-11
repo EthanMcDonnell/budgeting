@@ -104,6 +104,7 @@ Income against spending for 6, 12 or 24 months, broken down by category.
 - Rent can follow its weekly payments, with a balancing bucket
 - Quarterly and yearly bills are spread across the months
 - Pace: how far ahead or behind even spending you are today
+- Click a bucket on the dashboard to see the transactions behind it
 - Projected month end at your current daily rate
 
 **Sharing costs**

@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Clock, Tag, TrendingDown, TrendingUp } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronRight, Clock, Tag, TrendingDown, TrendingUp } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useApi, type Meta } from '../api.ts';
 import { MonthBars, PaceChart, bucketColor } from '../components/charts.tsx';
@@ -188,6 +188,10 @@ function Hero({ s }: { s: Summary }) {
 const dueTitle = (r: Summary['buckets'][number]['reserved']) =>
   r.cents ? `Still to pay: ${r.items.map((i) => `${i.name} ${moneyWhole(i.each_cents)}${i.dates.length > 1 ? ` × ${i.dates.length}` : ''}`).join(', ')}` : undefined;
 
+function BucketRow({ to, children }: { to: string | null; children: React.ReactNode }) {
+  return to ? <Link className="budget-item budget-link" to={to}>{children}</Link> : <div className="budget-item">{children}</div>;
+}
+
 function BudgetPanel({ s }: { s: Summary }) {
   const pace = s.is_current ? s.elapsed_days / s.days_in_month : null;
   const outside = s.categories.filter((c) => c.bucket_id == null && c.spent_cents !== 0);
@@ -219,8 +223,10 @@ function BudgetPanel({ s }: { s: Summary }) {
               const state = save ? 'ok' : b.actual_cents > target ? 'bad' : b.actual_cents >= target * 0.9 && b.actual_cents > 0 ? 'warn' : 'ok';
               const left = target - b.actual_cents;
               return (
-                <div className="budget-item" key={b.id}>
-                  <div className="name"><i className="swatch" style={{ background: bucketColor(i), borderRadius: 99 }} />{b.name}</div>
+                // A spending bucket opens its transactions; savings has no categories, so there's nothing to list.
+                <BucketRow key={b.id} to={save ? null : `/transactions?bucket=${b.id}&month=${s.month}`}>
+                  <div className="name"><i className="swatch" style={{ background: bucketColor(i), borderRadius: 99 }} />{b.name}
+                    {!save && <ChevronRight size={14} className="go" aria-hidden />}</div>
                   <div className="figures">
                     {pending ? <span className="muted">Waiting on pay</span>
                       : <>{b.actual_cents < 0 && '−'}{moneyWhole(Math.abs(b.actual_cents))} <span className="muted">/ {moneyWhole(target)}</span></>}
@@ -249,7 +255,7 @@ function BudgetPanel({ s }: { s: Summary }) {
                     )}
                   </div>
                   {note && <span className="target-note">{note}</span>}
-                </div>
+                </BucketRow>
               );
             })}
           </div>

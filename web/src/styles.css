@@ -376,6 +376,11 @@ a.plain-link { color: inherit; }
 .budget-item .state { justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
 .budget-item .state-left { display: inline-flex; align-items: center; gap: 4px; }
 .budget-item .state .due-note { white-space: nowrap; }
+/* Spending buckets open their transactions. */
+a.budget-item.budget-link, a.budget-item.budget-link:hover { color: inherit; text-decoration: none; }
+.budget-link .go { color: var(--muted); transition: transform .15s, color .15s; flex: none; }
+.budget-link:hover .name, .budget-link:focus-visible .name { color: var(--accent); }
+.budget-link:hover .go, .budget-link:focus-visible .go { color: var(--accent); transform: translateX(2px); }
 .select-sm.unset { color: var(--warn-ink); border-color: color-mix(in srgb, var(--warn) 60%, var(--line-strong)); }
 .unbudgeted { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; padding-top: 12px; border-top: 1px dashed var(--line-strong); }
 .unbudgeted .row { justify-content: space-between; font-size: 13px; }

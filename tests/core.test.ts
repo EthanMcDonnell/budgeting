@@ -205,6 +205,14 @@ describe('buckets', () => {
     expect(budgetPlan(db, '2026-10').totals.allocated_percent).toBe(100);
   });
 
+  it('filters transactions to the categories in a bucket', () => {
+    const descriptions = (bucket: string) => store.listTransactions(db, { bucket }).transactions.map((t) => t.description).sort();
+    expect(descriptions('Splurge')).toEqual(['GUZMAN Y GOMEZ PERTH']);
+    expect(descriptions('Expenses')).toEqual(['TRANSPERTH SMARTRIDER', 'WOOLWORTHS 4321 PERTH AU']);
+    expect(descriptions('Savings')).toEqual([]);
+    expect(() => store.listTransactions(db, { bucket: 'Nope' })).toThrow(/bucket/i);
+  });
+
   it('works percentages off the average income of the months before, or a fixed income', () => {
     importTransactions(db, { account: 'Everyday', source: 'pdf', transactions: [
       { date: '2026-10-02', description: 'SALARY ACME PTY LTD', amount: 4000, category: 'Salary' },

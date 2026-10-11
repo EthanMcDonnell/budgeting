@@ -184,6 +184,7 @@ tool('list_transactions',
     account: z.string().optional(),
     search: z.string().optional().describe('Text in description, merchant or notes'),
     merchant: z.string().optional().describe('Payee (merchant or person) name, or "none" for transactions with no payee'),
+    bucket: z.string().optional().describe('Budget bucket name: transactions in any of its categories'),
     limit: z.number().int().max(2000).optional().describe('Default 200'),
   },
   (a) => {

@@ -2,6 +2,7 @@ import { Pencil, Plus, Repeat, Trash2, Users, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, useApi, type Category, type Meta, type Transaction } from '../api.ts';
+import { bucketColor } from '../components/charts.tsx';
 import { SplitEditor, SplitMark } from '../components/splits.tsx';
 import { CategorySelect, ErrorNotice, Modal, MonthPicker, useAction, useMonth } from '../components/ui.tsx';
 import { dateLabel, money, todayIso } from '../format.ts';
@@ -19,16 +20,17 @@ export default function Transactions({ meta }: { meta: Meta | null }) {
   const [category, setCategory] = useState<string>(params.get('category') ?? '');
   const [account, setAccount] = useState<string>('');
   const [payee, setPayee] = useState<string>(params.get('payee') ?? '');
+  const [bucket, setBucket] = useState<string>(params.get('bucket') ?? '');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<Transaction | 'new' | null>(null);
   const [splitting, setSplitting] = useState<Transaction | null>(null);
   const run = useAction();
 
-  // Deep links like /transactions?category=uncategorized&month=2026-09 from the dashboard.
+  // Deep links like /transactions?category=uncategorized&month=2026-09 or ?bucket=3 from the dashboard.
   useEffect(() => {
     const m = params.get('month');
     if (m) setMonth(m);
-    if (params.has('category') || params.has('month') || params.has('payee')) setParams({}, { replace: true });
+    if (params.has('category') || params.has('month') || params.has('payee') || params.has('bucket')) setParams({}, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -43,13 +45,20 @@ export default function Transactions({ meta }: { meta: Meta | null }) {
   if (category) query.set('category', category);
   if (account) query.set('account', account);
   if (payee) query.set('payee', payee);
+  if (bucket) query.set('bucket', bucket);
   const list = useApi<TxList>(`/transactions?${query}`);
   const rows = list.data?.transactions ?? [];
   const categories = meta?.categories ?? [];
   const multiAccount = (meta?.accounts.length ?? 0) > 1;
 
-  useEffect(() => setSelected(new Set()), [month, scope, debounced, category, account, payee]);
+  useEffect(() => setSelected(new Set()), [month, scope, debounced, category, account, payee, bucket]);
   const payeeName = payee ? rows.find((r) => String(r.payee_id) === payee)?.merchant ?? 'selected payee' : null;
+  const buckets = meta?.buckets ?? [];
+  const bucketIndex = buckets.findIndex((b) => String(b.id) === bucket);
+  const bucketName = bucket ? buckets[bucketIndex]?.name ?? 'Bucket' : null;
+  // With a bucket chosen, the category list narrows to the categories in it.
+  const shownCategories = bucket ? categories.filter((c) => String(c.bucket_id) === bucket) : categories;
+
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const toggle = (id: number) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -89,15 +98,23 @@ export default function Transactions({ meta }: { meta: Meta | null }) {
         <input className="input" type="search" placeholder="Search description, merchant, notes" value={search}
           onChange={(e) => setSearch(e.target.value)} aria-label="Search transactions" />
         <select className="select" value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Filter by category">
-          <option value="">All categories</option>
-          <option value="uncategorized">Uncategorised</option>
-          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          <option value="">{bucketName ? `All of ${bucketName}` : 'All categories'}</option>
+          {!bucket && <option value="uncategorized">Uncategorised</option>}
+          {shownCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         {multiAccount && (
           <select className="select" value={account} onChange={(e) => setAccount(e.target.value)} aria-label="Filter by account">
             <option value="">All accounts</option>
             {meta!.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
+        )}
+        {bucketName && (
+          <span className="badge filter-chip" title={shownCategories.map((c) => c.name).join(', ')}>
+            <i className="swatch" style={{ background: bucketColor(Math.max(bucketIndex, 0)), borderRadius: 99 }} />
+            <b>{bucketName}</b>
+            <span className="muted">{shownCategories.length ? shownCategories.map((c) => c.name).join(', ') : 'no categories'}</span>
+            <button className="btn btn-ghost btn-icon btn-sm" style={{ height: 18, width: 18 }} onClick={() => setBucket('')} aria-label={`Stop filtering by the ${bucketName} bucket`}><X size={12} /></button>
+          </span>
         )}
         {payeeName && (
           <span className="badge filter-chip">

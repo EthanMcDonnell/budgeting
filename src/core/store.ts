@@ -406,6 +406,8 @@ export interface TxFilter {
   account?: string | number; search?: string; kind?: CategoryKind; limit?: number; offset?: number;
   /** Payee id or name, or 'none' for transactions not linked to one. */
   payee?: string | number | 'none';
+  /** Bucket id or name: transactions in any of its categories. */
+  bucket?: string | number;
 }
 
 const TX_SELECT = `
@@ -449,6 +451,7 @@ function txWhere(db: DB, f: TxFilter) {
     where.push('t.account_id = ?'); params.push(a.id);
   }
   if (f.kind) { where.push('c.kind = ?'); params.push(f.kind); }
+  if (f.bucket != null && f.bucket !== '') { where.push('c.bucket_id = ?'); params.push(requireBucket(db, f.bucket).id); }
   if (f.payee === 'none') where.push('t.payee_id IS NULL');
   else if (f.payee != null && f.payee !== '') {
     where.push('t.payee_id = ?'); params.push(requirePayee(db, f.payee).id);

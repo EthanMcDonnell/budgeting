@@ -14,6 +14,7 @@ export interface Account { id: number; name: string; institution: string; type: 
 export interface Meta {
   accounts: Account[];
   categories: Category[];
+  buckets: Bucket[];
   overview: { transaction_count: number; first_date: string | null; last_date: string | null; uncategorized: number; months: string[] };
   db_path: string;
 }

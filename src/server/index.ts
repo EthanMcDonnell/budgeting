@@ -29,6 +29,7 @@ app.get('/api/meta', (_req, res) => {
   res.json({
     accounts: store.listAccounts(db),
     categories: store.listCategories(db, true),
+    buckets: store.listBuckets(db),
     overview: overview(db),
     db_path: DEFAULT_DB_PATH,
   });
@@ -44,7 +45,7 @@ app.get('/api/transactions', (req, res) => {
   res.json(store.listTransactions(db, {
     month: str(q.month), from: str(q.from), to: str(q.to), search: str(q.search),
     category: q.category === 'uncategorized' ? 'uncategorized' : num(q.category),
-    payee: q.payee === 'none' ? 'none' : num(q.payee),
+    payee: q.payee === 'none' ? 'none' : num(q.payee), bucket: num(q.bucket),
     account: num(q.account), limit: num(q.limit) ?? 2000, offset: num(q.offset),
   }));
 });
