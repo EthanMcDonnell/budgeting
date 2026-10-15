@@ -310,7 +310,8 @@ export interface PaybackSuggestion {
   purchase: { id: number; date: string; merchant: string | null; description: string; amount_cents: number; category: string | null; split_id: number | null; notes: string | null };
   ways: number;
   share_cents: number;
-  payments: { id: number; date: string; person: string; payee_id: number; amount_cents: number; description: string; memo: string | null; notes: string | null }[];
+  /** `unlinked`: the bank text names the person but the payment isn't linked to them yet; confirming links it. */
+  payments: { id: number; date: string; person: string; payee_id: number; amount_cents: number; description: string; memo: string | null; notes: string | null; unlinked?: boolean }[];
   confidence: 'high' | 'medium';
   reasons: string[];
   /** People sent different amounts (each paid for what they had), so there's no single "each". */
@@ -444,8 +445,88 @@ export function suggestPaybacks(db: DB, opts: { from?: string; payee?: number } 
       AND NOT EXISTS (SELECT 1 FROM not_paybacks np WHERE np.transaction_id = t.id)
       AND (@from IS NULL OR t.date >= @from) AND (@payee IS NULL OR t.payee_id = @payee)
     ORDER BY t.date`).all({ from: opts.from ?? null, payee: opts.payee ?? null }) as Payment[];
-  if (!payments.length) return [];
 
+  const flagged = flaggedPaybacks(db, payments, opts);
+  const rest = payments.filter((p) => !flagged.claimed.has(p.id));
+  const matched = rest.length ? matchPaybacks(db, rest, flagged.taken) : [];
+  return applyReviews(db, [...flagged.groups, ...matched], [...payments, ...flagged.unlinked])
+    .map((g) => ({ ...g, uneven: g.payments.some((p) => Math.abs(p.amount_cents - g.share_cents) > tolerance(g.share_cents)) }))
+    .sort((a, b) => b.purchase.date.localeCompare(a.purchase.date) || b.purchase.id - a.purchase.id);
+}
+
+/**
+ * Payments for splits you've flagged with named people: money in from someone a share is waiting on, of
+ * about what they still owe, any time from a few days before the purchase on (however late they pay). Their
+ * payment can be linked to them already, or not linked to anyone yet with their name in the bank text.
+ * Shares are matched oldest first, so the first payment that fits pays off the oldest debt.
+ * `taken` is "split:payee" for each share matched here, so the general matcher leaves it alone.
+ */
+function flaggedPaybacks(db: DB, linked: Payment[], opts: { from?: string; payee?: number }) {
+  const groups: PaybackSuggestion[] = [];
+  const claimed = new Set<number>();
+  const taken = new Set<string>();
+  const unlinked: Payment[] = [];
+  const open = listSplits(db, opts.payee != null ? { payee: opts.payee } : {})
+    .flatMap((split) => split.shares
+      .filter((s) => s.payee_id != null && s.outstanding_cents > 0 && (opts.payee == null || s.payee_id === opts.payee))
+      .map((share) => ({ split, share })))
+    .sort((a, b) => a.split.date.localeCompare(b.split.date) || a.split.id - b.split.id);
+  if (!open.length) return { groups, claimed, taken, unlinked };
+
+  const earliest = open[0].split.date;
+  const strays = db.prepare(`SELECT t.id, t.date, t.description, t.amount_cents, t.memo, t.notes
+    FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
+    WHERE t.payee_id IS NULL AND t.amount_cents >= 200 AND t.contributor_id IS NULL AND (c.kind IS NULL OR c.kind = 'expense')
+      AND NOT EXISTS (SELECT 1 FROM split_payments sp WHERE sp.transaction_id = t.id)
+      AND NOT EXISTS (SELECT 1 FROM not_paybacks np WHERE np.transaction_id = t.id)
+      AND t.date >= date(@earliest, '-${BEFORE} day') AND (@from IS NULL OR t.date >= @from)
+    ORDER BY t.date`).all({ earliest, from: opts.from ?? null }) as Omit<Payment, 'payee_id' | 'person'>[];
+  const names = (person: string) => [...words(person)];
+
+  const fits = (split: Split, share: Share) => {
+    const fromThem = linked.filter((p) => p.payee_id === share.payee_id).map((p) => ({ p, unlinked: false }));
+    const named = strays.filter((p) => names(share.person!).some((n) => words(p.description).has(n)))
+      .map((p) => ({ p: { ...p, payee_id: share.payee_id!, person: share.person! }, unlinked: true }));
+    return [...fromThem, ...named].filter(({ p }) => !claimed.has(p.id) && daysBetween(split.date, p.date) >= -BEFORE
+      && Math.abs(p.amount_cents - share.outstanding_cents) <= tolerance(share.outstanding_cents))
+      .sort((a, b) => Number(a.unlinked) - Number(b.unlinked) || a.p.date.localeCompare(b.p.date));
+  };
+
+  for (const { split, share } of open) {
+    const [best] = fits(split, share);
+    if (!best) continue;
+    const { p } = best;
+    claimed.add(p.id);
+    taken.add(`${split.id}:${share.payee_id}`);
+    if (best.unlinked) unlinked.push(p);
+
+    const reasons = [`flagged for ${share.person}`];
+    if (best.unlinked) reasons.push(`bank text names ${share.person}`);
+    const note = noteWords(p);
+    const aboutIt = memoMatches(said(p), p.person, shopName(split));
+    if (aboutIt) reasons.push('memo names it');
+    else if (note.length) reasons.push(`note says "${p.memo ?? memoFrom(p.description)}"`);
+    // Another flagged share of theirs it would fit as well (they owe $20 for two dinners).
+    const other = open.find((o) => o.split.id !== split.id && o.share.payee_id === share.payee_id && o.share.outstanding_cents > 0
+      && daysBetween(o.split.date, p.date) >= -BEFORE && Math.abs(p.amount_cents - o.share.outstanding_cents) <= tolerance(o.share.outstanding_cents));
+    if (other) reasons.push(`could also be ${other.split.merchant ?? other.split.description}`);
+    const sure = !best.unlinked && !other && (aboutIt || !note.length);
+
+    const purchase = { id: split.transaction_id, date: split.date, merchant: split.merchant, description: split.description, amount_cents: split.amount_cents, category: split.category, split_id: split.id, notes: split.notes };
+    let g = groups.find((x) => x.purchase.split_id === split.id);
+    if (!g) {
+      g = { purchase, ways: split.ways, share_cents: share.outstanding_cents, payments: [], confidence: 'high', reasons: [], uneven: false, reviews: [] };
+      groups.push(g);
+    }
+    g.payments.push({ id: p.id, date: p.date, person: share.person!, payee_id: share.payee_id!, amount_cents: p.amount_cents, description: p.description, memo: p.memo, notes: p.notes, ...(best.unlinked ? { unlinked: true } : {}) });
+    if (!sure) g.confidence = 'medium';
+    for (const r of reasons) if (!g.reasons.includes(r)) g.reasons.push(r);
+  }
+  return { groups, claimed, taken, unlinked };
+}
+
+/** The general matcher: purchases each payment could be a share of, by amount, timing, notes and other payers. */
+function matchPaybacks(db: DB, payments: Payment[], taken: Set<string>): PaybackSuggestion[] {
   const { purchases, splitShares } = loadPurchases(db, payments);
   const candidates = new Map<number, Candidate[]>();
   for (const pay of payments) {
@@ -469,7 +550,8 @@ export function suggestPaybacks(db: DB, opts: { from?: string; payee?: number } 
 
   const chosen: { c: Candidate; confidence: 'high' | 'medium'; reasons: string[] }[] = [];
   for (const list of candidates.values()) {
-    const ranked = list.filter(enoughPayers).map((c) => ({ c, s: score(c) })).sort((a, b) => b.s - a.s);
+    const ranked = list.filter((c) => enoughPayers(c) && !(c.existing && taken.has(`${c.purchase.split_id}:${c.payment.payee_id}`)))
+      .map((c) => ({ c, s: score(c) })).sort((a, b) => b.s - a.s);
     const [best, next] = ranked;
     if (!best || best.s < 0.6) continue;
     const group = (payers.get(`${best.c.purchase.id}:${best.c.ways}`)?.size ?? 1) - 1;
@@ -520,10 +602,7 @@ export function suggestPaybacks(db: DB, opts: { from?: string; payee?: number } 
   const uneven = unevenGroups(payments.filter((p) => !claimed.has(p.id)), purchases.filter((q) => q.split_id == null && !targets.has(q.id)));
   for (const g of uneven) for (const p of g.payments) claimed.add(p.id);
   for (const g of uneven) addCompanions(g, payments, claimed);
-
-  return applyReviews(db, [...kept, ...uneven], payments)
-    .map((g) => ({ ...g, uneven: g.payments.some((p) => Math.abs(p.amount_cents - g.share_cents) > tolerance(g.share_cents)) }))
-    .sort((a, b) => b.purchase.date.localeCompare(a.purchase.date) || b.purchase.id - a.purchase.id);
+  return [...kept, ...uneven];
 }
 
 /**

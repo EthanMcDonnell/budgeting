@@ -11,7 +11,7 @@ const purchaseName = (p: { merchant: string | null; description: string }) => p.
 
 /** "Split 2 ways · $64.75 each", or for different amounts "Split 6 ways · $90.52 from 5 people · your part $15.88". */
 function splitLabel(g: PaybackSuggestion) {
-  if (g.purchase.split_id) return `Already split · ${money(g.share_cents)} share`;
+  if (g.purchase.split_id) return `Split ${g.ways} ways · waiting on ${[...new Set(g.payments.map((p) => p.person))].join(', ')}`;
   if (!g.uneven) return `Split ${g.ways} ways · ${money(g.share_cents)} each`;
   const sent = g.payments.reduce((t, p) => t + p.amount_cents, 0);
   const people = new Set(g.payments.map((p) => p.payee_id)).size;
@@ -42,7 +42,10 @@ export function PaybackSuggestions({ suggestions, hint }: { suggestions: Payback
   const likely = suggestions.filter((g) => g.confidence === 'high');
   const shown = all ? suggestions : suggestions.slice(0, 6);
 
-  const confirm = (g: PaybackSuggestion) => api('/splits/confirm', { body: { purchase_id: g.purchase.id, ways: g.ways, payment_ids: g.payments.map((p) => p.id) } });
+  const confirm = (g: PaybackSuggestion) => api('/splits/confirm', { body: {
+    purchase_id: g.purchase.id, ways: g.ways, payment_ids: g.payments.map((p) => p.id),
+    people: g.payments.filter((p) => p.unlinked).map((p) => ({ payment_id: p.id, person: p.person })),
+  } });
   const dismiss = (g: PaybackSuggestion) => run(
     () => Promise.all(g.payments.map((p) => api(`/paybacks/${p.id}/not-payback`, { method: 'PUT', body: { not_payback: true } }))),
     `Won't suggest ${g.payments.length === 1 ? 'that payment' : 'those payments'} again`,
@@ -78,7 +81,7 @@ export function PaybackSuggestions({ suggestions, hint }: { suggestions: Payback
               ))}
               <div className="suggest-pays">
                 {g.payments.map((p) => (
-                  <span key={p.id} className="badge" title={[p.memo && `“${p.memo}”`, p.notes, p.description].filter(Boolean).join('\n')}>
+                  <span key={p.id} className="badge" title={[p.unlinked && `Not linked to ${p.person} yet (their name is in the bank text); confirming links it`, p.memo && `“${p.memo}”`, p.notes, p.description].filter(Boolean).join('\n')}>
                     <Link to={payeeHref(p.payee_id, 'person')} className="plain-link">{p.person}</Link>
                     <span className="amount-in num">+{money(p.amount_cents)}</span>
                     <span className="muted">{dateLabel(p.date)}</span>
@@ -211,7 +214,7 @@ export function SplitEditor({ tx, onClose }: { tx: Transaction; onClose: () => v
       </>}>
       <ErrorNotice error={error} />
       <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-        {money(total)} on {dateLabel(tx.date, true)}. Paybacks from these people are linked to their share and filed under this purchase's category, so it nets down to your part.
+        {money(total)} on {dateLabel(tx.date, true)}. Each person's share stays flagged until they pay you. A payment from them of about that amount, any time from this date on, shows up under Paybacks to check on the People page for you to confirm. Confirmed paybacks are filed under this purchase's category, so it nets down to your part.
       </p>
       <label className="field">
         <span>Split between (you included)</span>
@@ -243,6 +246,9 @@ export function SplitEditor({ tx, onClose }: { tx: Transaction; onClose: () => v
 
 /** Small marker next to a transaction that's split or pays one back. */
 export function SplitMark({ t }: { t: Transaction }) {
+  if (t.split_id != null && t.split_owed_cents) {
+    return <span className="split-mark warn" title={`Split ${t.split_ways} ways · waiting on ${money(t.split_owed_cents)}`}><Users size={11} />waiting on {money(t.split_owed_cents)}</span>;
+  }
   if (t.split_id != null) return <span className="split-mark" title={`Split ${t.split_ways} ways`}><Users size={11} />{t.split_ways} ways</span>;
   if (t.payback_split_id != null) return <span className="split-mark" title={`Pays back their share of ${t.payback_for}`}><Users size={11} />for {t.payback_for}</span>;
   return null;

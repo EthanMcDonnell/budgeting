@@ -143,7 +143,7 @@ export interface Split {
 export interface PaybackSuggestion {
   purchase: { id: number; date: string; merchant: string | null; description: string; amount_cents: number; category: string | null; split_id: number | null; notes: string | null };
   ways: number; share_cents: number;
-  payments: { id: number; date: string; person: string; payee_id: number; amount_cents: number; description: string; memo: string | null; notes: string | null }[];
+  payments: { id: number; date: string; person: string; payee_id: number; amount_cents: number; description: string; memo: string | null; notes: string | null; unlinked?: boolean }[];
   confidence: 'high' | 'medium'; reasons: string[];
   /** People sent different amounts (each paid for what they had). */
   uneven: boolean;

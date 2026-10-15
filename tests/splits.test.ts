@@ -229,3 +229,63 @@ describe('notes on payments', () => {
   });
 });
 
+
+describe('flagged splits', () => {
+  it('waits for each named person to pay their share, however late, and stays flagged until confirmed', () => {
+    person('PRIYA SHAH', 'Priya');
+    person('SAM LEE', 'Sam');
+    imp([
+      { date: '1998-03-02', description: 'HARBOUR KITCHEN', amount: -90, merchant: 'Harbour Kitchen', category: 'Eating & Drinking Out' },
+      // Weeks later: Priya's share, Sam paying for something else, and a stranger sending the same amount.
+      { date: '1998-03-27', description: 'PRIYA SHAH 06:10PM 27Mar', amount: 30 },
+      { date: '1998-03-27', description: 'SAM LEE 06:12PM 27Mar', amount: 12 },
+      { date: '1998-03-28', description: 'ACME ENGINEERING REFUND', amount: 30, category: 'Shopping' },
+    ]);
+    const purchase = tx('HARBOUR KITCHEN');
+    splits.splitTransaction(db, purchase.id, { shares: [{ person: 'Priya' }, { person: 'Sam' }] });
+    expect(tx('HARBOUR KITCHEN').split_owed_cents).toBe(6000);
+
+    const [g, ...others] = splits.suggestPaybacks(db);
+    expect(others).toHaveLength(0);
+    expect(g.purchase.id).toBe(purchase.id);
+    expect(g.payments.map((p) => [p.person, p.amount_cents])).toEqual([['Priya', 3000]]);
+    expect([g.confidence, g.reasons]).toEqual(['high', ['flagged for Priya']]);
+
+    splits.confirmPayback(db, { purchase_id: purchase.id, ways: g.ways, payment_ids: g.payments.map((p) => p.id) });
+    expect(tx('HARBOUR KITCHEN').split_owed_cents).toBe(3000);
+    expect(tx('PRIYA SHAH 06:10PM 27Mar').payback_for).toBe('Harbour Kitchen');
+    expect(splits.suggestPaybacks(db)).toHaveLength(0);
+  });
+
+  it('finds a payment not linked to anyone yet by the name in its bank text, for confirming', () => {
+    imp([
+      { date: '1998-05-10', description: 'CINEMA NOVA', amount: -50, merchant: 'Cinema Nova', category: 'Fun & Travel' },
+      { date: '1998-05-20', description: 'MS PRIYA SHAH 09:00AM 20May movies', amount: 25 },
+    ]);
+    splits.splitTransaction(db, tx('CINEMA NOVA').id, { shares: [{ person: 'Priya' }] });
+    const [g] = splits.suggestPaybacks(db);
+    expect(g.payments[0]).toMatchObject({ person: 'Priya', unlinked: true });
+    expect(g.confidence).toBe('medium');
+    expect(g.reasons).toContain('bank text names Priya');
+
+    const pay = tx('MS PRIYA SHAH 09:00AM 20May movies').id;
+    const s = splits.confirmPayback(db, { purchase_id: tx('CINEMA NOVA').id, ways: 2, payment_ids: [pay], people: [{ payment_id: pay, person: 'Priya' }] });
+    expect(s.owed_cents).toBe(0);
+    expect(tx('MS PRIYA SHAH 09:00AM 20May movies').merchant).toBe('Priya');
+  });
+
+  it('pays off the oldest share first, and says which other one it could be', () => {
+    person('SAM LEE', 'Sam');
+    imp([
+      { date: '1998-06-01', description: 'NOODLE BAR', amount: -40, merchant: 'Noodle Bar', category: 'Eating & Drinking Out' },
+      { date: '1998-06-08', description: 'TACO SHOP', amount: -40, merchant: 'Taco Shop', category: 'Eating & Drinking Out' },
+      { date: '1998-06-20', description: 'SAM LEE 07:00PM 20Jun', amount: 20 },
+    ]);
+    splits.splitTransaction(db, tx('NOODLE BAR').id, { shares: [{ person: 'Sam' }] });
+    splits.splitTransaction(db, tx('TACO SHOP').id, { shares: [{ person: 'Sam' }] });
+    const list = splits.suggestPaybacks(db);
+    expect(list).toHaveLength(1);
+    expect(list[0].purchase.merchant).toBe('Noodle Bar');
+    expect([list[0].confidence, list[0].reasons]).toEqual(['medium', ['flagged for Sam', 'could also be Taco Shop']]);
+  });
+});

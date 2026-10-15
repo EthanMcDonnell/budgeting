@@ -77,7 +77,7 @@ const txOut = (t: store.Transaction) => ({
   ...(t.payee_kind === 'person' ? { person: true } : {}),
   amount: fromCents(t.amount_cents), category: t.category, categorized_by: t.categorized_by, ...(t.memo ? { memo: t.memo } : {}), notes: t.notes,
   recurring: t.recurring, from: t.contributor,
-  ...(t.split_id != null ? { split_id: t.split_id, split_ways: t.split_ways } : {}),
+  ...(t.split_id != null ? { split_id: t.split_id, split_ways: t.split_ways, ...(t.split_owed_cents ? { still_owed: dollars(t.split_owed_cents) } : {}) } : {}),
   ...(t.payback_split_id != null ? { payback_for: t.payback_for, payback_split_id: t.payback_split_id } : {}),
 });
 
@@ -424,7 +424,10 @@ const purchaseOut = (q: { id: number; date: string; merchant: string; amount_cen
 tool('find_paybacks',
   `Finds money in from people that pays back their share of a purchase you made. The matcher's rules: an n-way share once at
 least half the others have paid it (3-way needs 2), one person's clean half, or a group paying different amounts at the same
-time / with matching notes. Each suggestion shows the payments' bank text (notes like "Breakfast" and send times are in it).
+time / with matching notes. Splits already flagged with named people (split_transaction) are matched first: a payment
+from that person of about what they still owe, any time after the purchase ("flagged for <name>"). A payment marked unlinked
+has the person's name in its bank text but isn't linked to them yet: confirming with people=[{payment_id, person}] links it.
+Each suggestion shows the payments' bank text (notes like "Breakfast" and send times are in it).
 A payment's "memo" is what the sender wrote, word for word (transfer message or Beem memo): the best evidence. "notes" are
 earlier commentary and can include guesses.
 With wide=true, also lists every other payment in from people the matcher left alone (unnamed Beem payments too), with the
@@ -449,7 +452,7 @@ something the matcher missed) for the user to check on the People page. Ask the 
         ways: g.ways, ...(g.uneven ? { uneven: true, total_sent: dollars(g.payments.reduce((t, p) => t + p.amount_cents, 0)) } : { share: dollars(g.share_cents) }),
         confidence: g.confidence, reasons: g.reasons,
         payment_ids: g.payments.map((p) => p.id),
-        payments: g.payments.map((p) => ({ id: p.id, date: p.date, person: p.person, amount: dollars(p.amount_cents), description: p.description, ...(p.memo ? { memo: p.memo } : {}), ...(p.notes ? { notes: p.notes } : {}) })),
+        payments: g.payments.map((p) => ({ id: p.id, date: p.date, person: p.person, amount: dollars(p.amount_cents), description: p.description, ...(p.memo ? { memo: p.memo } : {}), ...(p.notes ? { notes: p.notes } : {}), ...(p.unlinked ? { unlinked: true } : {}) })),
         ...(g.reviews.length ? { your_reviews: g.reviews.map((r) => ({ payment_id: r.payment_id, verdict: r.verdict, note: r.note })) } : {}),
       })),
       ...(wide ? {
@@ -491,7 +494,7 @@ Use clear=true to remove a review. Keep the note short and specific: what in the
   });
 
 tool('split_transaction',
-  'Splits a purchase (money out) with people, or reshapes an existing split. Shares without an amount are an even split; unnamed shares are filled in to reach `ways`. People are created if new.',
+  'Splits a purchase (money out) with people, or reshapes an existing split. Use it to flag something the user paid for that named people owe them for: each named share stays flagged as owing until their payment is linked, and find_paybacks looks for a payment from them of about that amount from the purchase date on, for the user (or you) to confirm. Shares without an amount are an even split; unnamed shares are filled in to reach `ways`. People are created if new.',
   {
     id: z.number().int().describe('The purchase transaction id'),
     ways: z.number().int().min(2).optional().describe('People sharing it, you included. Defaults to everyone listed plus you'),

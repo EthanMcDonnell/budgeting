@@ -37,8 +37,8 @@ export interface Transaction {
   /** What the other person wrote on it (transfer message, Beem memo), word for word. `notes` is ours. */
   memo: string | null;
   recurring_id: number | null; recurring: string | null; contributor_id: number | null; contributor: string | null;
-  /** Money out shared with others: its split and how many ways. */
-  split_id: number | null; split_ways: number | null;
+  /** Money out shared with others: its split, how many ways, and what people still owe on it (flagged until they pay). */
+  split_id: number | null; split_ways: number | null; split_owed_cents: number | null;
   /** Money in paying back a share: the split it pays and that purchase's name. */
   payback_split_id: number | null; payback_for: string | null;
 }
@@ -417,6 +417,8 @@ const TX_SELECT = `
          t.categorized_by, t.notes, t.memo, t.source, t.import_id, t.recurring_id, r.name AS recurring,
          t.contributor_id, rc.name AS contributor,
          s.id AS split_id, (SELECT COUNT(*) + 1 FROM split_shares ss WHERE ss.split_id = s.id) AS split_ways,
+         (SELECT SUM(MAX(ss.amount_cents - COALESCE((SELECT SUM(sp.amount_cents) FROM split_payments sp WHERE sp.share_id = ss.id), 0), 0))
+           FROM split_shares ss WHERE ss.split_id = s.id AND ss.settled = 0) AS split_owed_cents,
          pb.split_id AS payback_split_id, pb.name AS payback_for
   FROM transactions t
   JOIN accounts a ON a.id = t.account_id

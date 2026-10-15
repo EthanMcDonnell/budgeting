@@ -29,7 +29,7 @@ export interface Transaction {
   memo: string | null;
   source: string; import_id: number | null; recurring_id: number | null; recurring: string | null;
   contributor_id: number | null; contributor: string | null;
-  split_id: number | null; split_ways: number | null; payback_split_id: number | null; payback_for: string | null;
+  split_id: number | null; split_ways: number | null; split_owed_cents: number | null; payback_split_id: number | null; payback_for: string | null;
 }
 export interface Rule {
   id: number; pattern: string; match_type: 'contains' | 'regex'; category_id: number | null; category: string | null;
