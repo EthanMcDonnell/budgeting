@@ -296,7 +296,26 @@ table.table { width: 100%; border-collapse: collapse; }
   .tx-date { grid-area: date; font-size: 12.5px; color: var(--muted); }
   .tx-cat { grid-area: cat; margin-top: 4px; }
   .tx-edit { grid-area: edit; justify-self: end; margin-top: 4px; }
+
+  /* Shared costs become cards too: purchase and total, then who owes with Settled beside it. */
+  .shared-table, .shared-table thead, .shared-table tbody { display: block; }
+  .shared-table thead { display: none; }
+  .shared-table tbody tr {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: center;
+    grid-template-areas: 'desc total' 'owes act'; padding: 10px 12px; border-bottom: 1px solid var(--line);
+  }
+  .shared-table tbody tr:last-child { border-bottom: 0; }
+  .shared-table tbody td { display: block; padding: 0 !important; border: 0; min-width: 0; }
+  .sc-desc { grid-area: desc; }
+  .sc-desc .desc-sub { max-width: none; white-space: normal; }
+  .sc-total { grid-area: total; align-self: start; font-weight: 600; }
+  .sc-owes { grid-area: owes; }
+  .sc-act { grid-area: act; justify-self: end; }
+  .sc-act:empty { display: none; }
+
+  .panel-head { flex-wrap: wrap; row-gap: 2px; }
 }
+.sc-act { white-space: nowrap; }
 .amount-in { color: var(--good-ink); }
 .table td.recurring-detail-cell { background: var(--surface-2); padding-left: 64px; }
 @media (max-width: 640px) { .table td.recurring-detail-cell { padding-left: 12px; } }

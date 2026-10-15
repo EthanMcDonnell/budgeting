@@ -25,7 +25,7 @@ export function ShareStatus({ s, name = true }: { s: SplitShare; name?: boolean 
   if (s.status === 'paid') return <span className="row good" style={{ gap: 4 }}><CheckCircle2 size={12} />{who}paid {money(s.paid_cents)}</span>;
   if (s.status === 'settled') return <span className="row muted" style={{ gap: 4 }}><Check size={12} />{who}settled</span>;
   return (
-    <span className={`row ${s.status === 'partial' ? 'warn' : 'bad'}`} style={{ gap: 4 }}>
+    <span className={`row ${s.status === 'partial' ? 'warn' : 'bad'}`} style={{ gap: 4, whiteSpace: 'nowrap' }}>
       <AlertTriangle size={12} />{who}owes {money(s.outstanding_cents)}{s.status === 'partial' && <span className="muted"> of {money(s.amount_cents)}</span>}
     </span>
   );
@@ -117,7 +117,7 @@ export function SharedCosts({ splits, payee, title = 'Shared costs', hint, empty
       <div className="panel-head"><h2>{title}</h2>{hint && <span className="hint">{hint}</span>}</div>
       {splits.length === 0 ? <div className="panel-body muted" style={{ fontSize: 13 }}>{empty}</div> : (
         <div className="table-wrap">
-          <table className="table">
+          <table className="table shared-table">
             <thead>
               <tr>
                 <th className="hide-sm">Date</th><th>Purchase</th><th className="num">Total</th><th className="num hide-sm">Your part</th>
@@ -131,13 +131,13 @@ export function SharedCosts({ splits, payee, title = 'Shared costs', hint, empty
                 return (
                   <tr key={s.id}>
                     <td className="num hide-sm" style={{ whiteSpace: 'nowrap' }}>{dateLabel(s.date, true)}</td>
-                    <td>
+                    <td className="sc-desc">
                       <div className="desc-main">{purchaseName(s)}</div>
                       <div className="desc-sub"><span className="show-sm">{dateLabel(s.date, true)} · </span>Split {s.ways} ways{s.category && ` · ${s.category}`}{s.notes && ` · ${s.notes}`}</div>
                     </td>
-                    <td className="num">{money(s.amount_cents)}</td>
+                    <td className="num sc-total">{money(s.amount_cents)}</td>
                     <td className="num ink-2 hide-sm">{money(s.your_share_cents)}</td>
-                    <td>
+                    <td className="sc-owes">
                       <div className="stack" style={{ gap: 2, fontSize: 13 }}>
                         {shares.map((x) => (
                           <span key={x.id} className="row" style={{ gap: 6 }}>
@@ -147,7 +147,7 @@ export function SharedCosts({ splits, payee, title = 'Shared costs', hint, empty
                         ))}
                       </div>
                     </td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
+                    <td className="sc-act">
                       {open.length > 0 && (
                         <button className="btn btn-sm btn-ghost" title="Paid in cash, or let it go" onClick={() => Promise.all(open.map((x) => settle(x, true)))}>Settled</button>
                       )}
