@@ -11,6 +11,9 @@ import { payeeHref } from './Payees.tsx';
 
 interface TxList { transactions: Transaction[]; count: number; out_cents: number; in_cents: number }
 
+/** Rows loaded at a time. Search and filters run on the server over every transaction; only the results are paged. */
+const PAGE = 200;
+
 export default function Transactions({ meta }: { meta: Meta | null }) {
   const [params, setParams] = useSearchParams();
   const { month, setMonth } = useMonth();
@@ -24,6 +27,7 @@ export default function Transactions({ meta }: { meta: Meta | null }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<Transaction | 'new' | null>(null);
   const [splitting, setSplitting] = useState<Transaction | null>(null);
+  const [shown, setShown] = useState(PAGE);
   const run = useAction();
 
   // Deep links like /transactions?category=uncategorized&month=2026-09 or ?bucket=3 from the dashboard.
@@ -46,12 +50,14 @@ export default function Transactions({ meta }: { meta: Meta | null }) {
   if (account) query.set('account', account);
   if (payee) query.set('payee', payee);
   if (bucket) query.set('bucket', bucket);
+  query.set('limit', String(shown));
   const list = useApi<TxList>(`/transactions?${query}`);
   const rows = list.data?.transactions ?? [];
   const categories = meta?.categories ?? [];
   const multiAccount = (meta?.accounts.length ?? 0) > 1;
 
-  useEffect(() => setSelected(new Set()), [month, scope, debounced, category, account, payee, bucket]);
+  useEffect(() => { setSelected(new Set()); setShown(PAGE); }, [month, scope, debounced, category, account, payee, bucket]);
+  const total = list.data?.count ?? 0;
   const payeeName = payee ? rows.find((r) => String(r.payee_id) === payee)?.merchant ?? 'selected payee' : null;
   const buckets = meta?.buckets ?? [];
   const bucketIndex = buckets.findIndex((b) => String(b.id) === bucket);
@@ -138,7 +144,7 @@ export default function Transactions({ meta }: { meta: Meta | null }) {
                 <tr>
                   <th style={{ width: 36 }}>
                     <label className="row" style={{ gap: 10, flexWrap: 'nowrap' }}>
-                      <input type="checkbox" className="check" checked={allSelected} aria-label="Select all"
+                      <input type="checkbox" className="check" checked={allSelected} aria-label={rows.length < total ? `Select the ${rows.length} shown` : 'Select all'}
                         onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)))} />
                       <span className="show-sm" aria-hidden>Select all</span>
                     </label>
@@ -189,6 +195,14 @@ export default function Transactions({ meta }: { meta: Meta | null }) {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {rows.length < total && (
+          <div className="panel-body row" style={{ gap: 10 }}>
+            <button className="btn btn-sm" disabled={list.loading} onClick={() => setShown(shown + PAGE)}>
+              Show {Math.min(PAGE, total - rows.length)} more
+            </button>
+            <span className="muted num" style={{ fontSize: 13 }}>Showing {rows.length} of {total}</span>
           </div>
         )}
       </section>
