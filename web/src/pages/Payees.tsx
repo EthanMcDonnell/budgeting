@@ -48,9 +48,9 @@ export function PayeeListPage({ kind }: { kind: PayeeKind }) {
   const last: Column = { key: 'last', label: 'Last', phone: false, value: (p) => p.last_date ?? '' };
   const columns: Column[] = isPerson ? [
     name,
-    { key: 'out', label: 'You paid · 12 mo', short: 'You paid', num: true, title: 'Money you sent them in the 12 months to the selected month', value: (p) => p.year_out_cents },
-    { key: 'in', label: 'They paid · 12 mo', short: 'They paid', num: true, title: 'Money they sent you in the 12 months to the selected month', value: (p) => p.year_in_cents },
-    { key: 'owes', label: 'Owes you', num: true, title: 'Their unpaid share of things you paid for, plus split bills on the Recurring page', value: (p) => p.split_owed_cents + p.bills_owed_cents },
+    { key: 'out', label: 'You paid · 12 mo', short: 'Out', num: true, title: 'Money you sent them in the 12 months to the selected month', value: (p) => p.year_out_cents },
+    { key: 'in', label: 'They paid · 12 mo', short: 'In', num: true, title: 'Money they sent you in the 12 months to the selected month', value: (p) => p.year_in_cents },
+    { key: 'owes', label: 'Owes you', short: 'Owes', num: true, title: 'Their unpaid share of things you paid for, plus split bills on the Recurring page', value: (p) => p.split_owed_cents + p.bills_owed_cents },
     last,
   ] : [
     name,

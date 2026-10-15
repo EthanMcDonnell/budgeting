@@ -302,7 +302,7 @@ table.table { width: 100%; border-collapse: collapse; }
   .shared-table thead { display: none; }
   .shared-table tbody tr {
     display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: center;
-    grid-template-areas: 'desc total' 'owes act'; padding: 10px 12px; border-bottom: 1px solid var(--line);
+    grid-template-areas: 'desc total' 'owes act'; padding: 12px 18px; border-bottom: 1px solid var(--line);
   }
   .shared-table tbody tr:last-child { border-bottom: 0; }
   .shared-table tbody td { display: block; padding: 0 !important; border: 0; min-width: 0; }
@@ -310,7 +310,8 @@ table.table { width: 100%; border-collapse: collapse; }
   .sc-desc .desc-sub { max-width: none; white-space: normal; }
   .sc-total { grid-area: total; align-self: start; font-weight: 600; }
   .sc-owes { grid-area: owes; }
-  .sc-act { grid-area: act; justify-self: end; }
+  /* On the first person's line, its text lined up under the total. */
+  .sc-act { grid-area: act; justify-self: end; align-self: start; margin: -6px -9px -6px 0; }
   .sc-act:empty { display: none; }
 
   .panel-head { flex-wrap: wrap; row-gap: 2px; }
