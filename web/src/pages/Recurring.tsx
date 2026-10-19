@@ -83,11 +83,11 @@ function ShareAlert({ item }: { item: RecurringItem }) {
 function ShareCell({ share, billPaid }: { share: BillCycle['shares'][number]; billPaid: boolean }) {
   switch (share.status) {
     case 'paid':
-      return <span className="row good" style={{ gap: 4 }} title={`Paid ${money(share.paid_cents)}`}><CheckCircle2 size={13} />{money(share.paid_cents)}<span className="muted">{share.paid_date && dateLabel(share.paid_date)}</span></span>;
+      return <span className="row good" style={{ gap: '0 6px' }} title={`Paid ${money(share.paid_cents)}`}><span className="row" style={{ gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}><CheckCircle2 size={13} />{money(share.paid_cents)}</span><span className="muted">{share.paid_date && dateLabel(share.paid_date)}</span></span>;
     case 'partial':
       return <span className="warn">{money(share.paid_cents)} of {money(share.expected_cents)}</span>;
     case 'owing':
-      return <span className="row bad" style={{ gap: 4 }}><AlertTriangle size={13} />Owes {money(share.expected_cents)}</span>;
+      return <span className="row bad" style={{ gap: '0 6px' }} title={`Owes ${money(share.expected_cents)}`}><span className="row" style={{ gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}><AlertTriangle size={13} />{money(share.expected_cents)}</span><span className="muted">owing</span></span>;
     case 'waiting':
       return billPaid
         ? <span className="muted" title={`From before ${share.name} started paying a share`}>—</span>
@@ -124,7 +124,7 @@ function ItemDetail({ item }: { item: RecurringItem }) {
               const yours = bill == null ? null : bill - c.shares.reduce((t, s) => t + s.expected_cents, 0);
               return (
                 <tr key={c.date} className={c.bill_paid ? undefined : 'muted'}>
-                  <td style={{ whiteSpace: 'nowrap' }}>{dateLabel(c.date)}{!c.bill_paid && <span className="badge" style={{ marginLeft: 8 }}>Next</span>}</td>
+                  <td className="bill-date"><span>{dateLabel(c.date)}</span>{!c.bill_paid && <span className="badge">Next</span>}</td>
                   <td className="num">{bill == null ? '—' : <>{!c.bill_paid && '~'}{money(bill)}</>}</td>
                   {c.shares.map((s) => <td key={s.contributor_id} className="num-font"><ShareCell share={s} billPaid={c.bill_paid} /></td>)}
                   <td className="num">{yours == null ? '—' : <>{!c.bill_paid && '~'}{money(Math.max(yours, 0))}</>}</td>

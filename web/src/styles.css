@@ -330,6 +330,13 @@ table.table { width: 100%; border-collapse: collapse; }
 .detail-table th.num, .detail-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .detail-table th:last-child, .detail-table td:last-child { padding-right: 0; }
 .detail-table tbody tr:first-child td { padding-top: 7px; }
+.detail-table .bill-date, .detail-table .bill-date > span { white-space: nowrap; }
+.detail-table .bill-date .badge { margin-left: 8px; }
+@media (max-width: 640px) {
+  .detail-table th, .detail-table td { padding-right: 10px; }
+  .detail-table .bill-date { white-space: normal; }
+  .detail-table .bill-date .badge { display: flex; width: fit-content; margin: 3px 0 0; }
+}
 .detail-table tfoot td { padding-top: 6px; font-weight: 400; border-top: 0; }
 .num-font { font-variant-numeric: tabular-nums; }
 .detail-toggle {
