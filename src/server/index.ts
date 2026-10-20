@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_DB_PATH, PROJECT_ROOT, openDb } from '../core/db.ts';
 import { parseBankCsv } from '../core/csv.ts';
-import { importTransactions } from '../core/importer.ts';
+import { importCsv } from '../core/importer.ts';
 import * as recurring from '../core/recurring.ts';
 import { listPayees, payeeDetail } from '../core/payees.ts';
 import { budgetPlan, monthSummary, overview, trends } from '../core/reports.ts';
@@ -177,11 +177,21 @@ app.post('/api/import/csv', (req, res) => {
   let parsed;
   try { parsed = parseBankCsv(text); } catch (e) { throw new UserError((e as Error).message); }
   if (parsed.transactions.length === 0) throw new UserError('No transactions found in that file');
-  const result = importTransactions(db, {
-    account, source: 'csv', label: filename ?? 'CSV import', transactions: parsed.transactions,
-    possibleDuplicates: possible_duplicates ?? 'skip', dryRun: !commit,
+  const results = importCsv(db, parsed, {
+    account, label: filename ?? 'CSV import', possibleDuplicates: possible_duplicates ?? 'skip', dryRun: !commit,
   });
-  res.json({ ...result, format: parsed.format, skipped_rows: parsed.skippedRows, account_numbers: parsed.accountNumbers });
+  // One preview across the accounts the file covers.
+  const sum = (k: 'inserted' | 'duplicates' | 'possible_duplicates' | 'invalid' | 'uncategorized') => results.reduce((s, r) => s + r[k], 0);
+  const dates = results.flatMap((r) => [r.period.start, r.period.end]).filter((d): d is string => !!d).sort();
+  res.json({
+    dry_run: !commit, account: results.map((r) => r.account).join(' + '),
+    accounts: results.map((r) => ({ account: r.account, new: r.rows.filter((x) => x.status === 'new').length })),
+    inserted: sum('inserted'), duplicates: sum('duplicates'), possible_duplicates: sum('possible_duplicates'),
+    invalid: sum('invalid'), uncategorized: sum('uncategorized'),
+    period: { start: dates[0] ?? null, end: dates.at(-1) ?? null },
+    rows: results.flatMap((r) => r.rows.map((x) => ({ ...x, account: r.account }))),
+    format: parsed.format, skipped_rows: parsed.skippedRows,
+  });
 });
 
 // Full JSON backup of everything in the database.

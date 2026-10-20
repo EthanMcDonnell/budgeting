@@ -6,7 +6,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { openDb } from '../core/db.ts';
 import { parseBankCsv } from '../core/csv.ts';
-import { importTransactions } from '../core/importer.ts';
+import { importCsv, importTransactions } from '../core/importer.ts';
 import * as recurring from '../core/recurring.ts';
 import { listPayees, payeeDetail } from '../core/payees.ts';
 import { budgetPlan, monthSummary, overview, trends, type BucketTarget } from '../core/reports.ts';
@@ -145,24 +145,25 @@ verify every line was captured. Run with dry_run=true first and check the reconc
   });
 
 tool('import_csv_file',
-  'Imports a CSV transaction export (Bankwest Online Banking export, or any CSV with date/description/amount or debit/credit columns) from a local file path. Rules categorise what they can.',
+  'Imports a CSV transaction export (Bankwest Online Banking export, or any CSV with date/description/amount or debit/credit columns) from a local file path. Rows with an account number go into the account with that number, so a full Bankwest export covering several accounts imports in one go (one result per account). Rules categorise what they can.',
   {
     path: z.string().describe('Absolute path to the CSV, ~ allowed'),
-    account: z.string().describe('Account name; created if new'),
+    account: z.string().optional().describe('Account name (created if new) for rows whose account number no account has yet, or for files without account numbers. The number is remembered on it'),
     possible_duplicates: z.enum(['skip', 'import']).optional(),
     dry_run: z.boolean().optional(),
   },
   (a) => {
     const file = a.path.startsWith('~') ? path.join(os.homedir(), a.path.slice(1)) : a.path;
     const parsed = parseBankCsv(fs.readFileSync(file, 'utf8'));
-    const r = importTransactions(db, {
-      account: a.account, source: 'csv', label: path.basename(file), transactions: parsed.transactions,
-      possibleDuplicates: a.possible_duplicates, dryRun: a.dry_run,
+    const results = importCsv(db, parsed, {
+      account: a.account, label: path.basename(file), possibleDuplicates: a.possible_duplicates, dryRun: a.dry_run,
     });
-    const { rows, ...rest } = r;
     return {
-      ...rest, format: parsed.format, unreadable_rows: parsed.skippedRows,
-      duplicate_rows: rows.filter((x) => x.status !== 'new').map((x) => ({ index: x.index, status: x.status, date: x.date, description: x.description, amount: x.amount_cents / 100 })),
+      format: parsed.format, unreadable_rows: parsed.skippedRows,
+      imports: results.map(({ rows, ...rest }) => ({
+        ...rest,
+        duplicate_rows: rows.filter((x) => x.status !== 'new').map((x) => ({ index: x.index, status: x.status, date: x.date, description: x.description, amount: x.amount_cents / 100 })),
+      })),
     };
   });
 

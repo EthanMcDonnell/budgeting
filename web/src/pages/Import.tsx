@@ -7,11 +7,12 @@ import { dateLabel, money } from '../format.ts';
 interface PreviewRow {
   index: number; status: 'new' | 'duplicate' | 'possible_duplicate' | 'invalid'; date: string | null; description: string;
   amount_cents: number; category: string | null; category_source: 'given' | 'rule' | null; merchant: string | null; error?: string;
+  account: string;
 }
 interface CsvResult {
-  dry_run: boolean; account: string; account_created: boolean; inserted: number; duplicates: number; possible_duplicates: number;
+  dry_run: boolean; account: string; accounts: { account: string; new: number }[]; inserted: number; duplicates: number; possible_duplicates: number;
   invalid: number; uncategorized: number; period: { start: string | null; end: string | null }; rows: PreviewRow[];
-  format: string; skipped_rows: { line: number; reason: string }[]; account_numbers: string[];
+  format: string; skipped_rows: { line: number; reason: string }[];
 }
 interface ImportRow {
   id: number; source: string; label: string | null; account: string | null; period_start: string | null; period_end: string | null;
@@ -144,10 +145,10 @@ function CsvImport({ meta }: { meta: Meta | null }) {
     <section className="panel">
       <div className="panel-head"><h2 className="row" style={{ gap: 8 }}><FileUp size={16} style={{ color: 'var(--accent)' }} />CSV export</h2></div>
       <div className="panel-body stack">
-        <p className="ink-2">In Bankwest Online Banking, open the account, search the date range you want and export as CSV. Exact amounts, nothing for AI to misread, and you can do it mid-month to keep the dashboard current.</p>
+        <p className="ink-2">In Bankwest Online Banking, export one account or all of them as CSV: rows go to the account with their account number. Exact amounts, nothing for AI to misread, and you can do it mid-month to keep the dashboard current.</p>
         <div className="grid-2">
           <label className="field">
-            <span>Account</span>
+            <span>Account <span className="muted">(for an account number not seen before)</span></span>
             <select className="select" value={chosen} onChange={(e) => { setAccountChoice(e.target.value); setPreview(null); }}>
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               <option value="new">New account…</option>
@@ -179,6 +180,7 @@ function CsvImport({ meta }: { meta: Meta | null }) {
               {preview.duplicates > 0 && <span className="badge"><i className="status-dot status-duplicate" />{preview.duplicates} already imported</span>}
               {preview.possible_duplicates > 0 && <span className="badge"><i className="status-dot status-possible_duplicate" />{preview.possible_duplicates} possible duplicates</span>}
               {preview.invalid + preview.skipped_rows.length > 0 && <span className="badge"><i className="status-dot status-invalid" />{preview.invalid + preview.skipped_rows.length} unreadable</span>}
+              {preview.accounts.length > 1 && <span className="muted">{preview.accounts.map((a) => `${a.account}: ${a.new} new`).join(' · ')}</span>}
               {preview.period.start && <span className="muted">{dateLabel(preview.period.start, true)} – {dateLabel(preview.period.end!, true)}</span>}
             </div>
             {preview.possible_duplicates > 0 && (
@@ -192,7 +194,7 @@ function CsvImport({ meta }: { meta: Meta | null }) {
                 <thead><tr><th>Date</th><th>Description</th><th className="hide-sm">Category</th><th className="num">Amount</th></tr></thead>
                 <tbody>
                   {shown.map((r) => (
-                    <tr key={r.index} style={r.status === 'new' ? undefined : { opacity: 0.6 }}>
+                    <tr key={`${r.account}-${r.index}`} style={r.status === 'new' ? undefined : { opacity: 0.6 }}>
                       <td className="num" style={{ whiteSpace: 'nowrap' }}>
                         <i className={`status-dot status-${r.status}`} title={STATUS_LABEL[r.status]} style={{ marginRight: 6 }} />
                         {r.date ? dateLabel(r.date) : '—'}
@@ -200,6 +202,7 @@ function CsvImport({ meta }: { meta: Meta | null }) {
                       <td>
                         <div className="desc-main">{r.merchant ?? r.description}</div>
                         <div className={`desc-sub show-sm ${r.category ? '' : 'warn'}`}>{r.category ?? 'Uncategorised'}</div>
+                        {preview.accounts.length > 1 && <div className="desc-sub">{r.account}</div>}
                         {r.status !== 'new' && <div className="desc-sub">{r.error ?? STATUS_LABEL[r.status]}</div>}
                       </td>
                       <td className={`hide-sm ${r.category ? 'ink-2' : 'warn'}`}>{r.category ?? 'Uncategorised'}</td>

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type DB } from '../src/core/db.ts';
 import { parseBankCsv, parseCsv } from '../src/core/csv.ts';
-import { importTransactions } from '../src/core/importer.ts';
+import { importCsv, importTransactions } from '../src/core/importer.ts';
 import { budgetPlan, monthSummary, trends } from '../src/core/reports.ts';
 import * as store from '../src/core/store.ts';
 import { normalizeDate, parseMoney } from '../src/core/util.ts';
@@ -125,6 +125,30 @@ describe('import', () => {
     expect(r.invalid).toBe(1);
     expect(r.unknown_categories).toEqual(['Nonsense']);
     expect(r.uncategorized).toBe(1);
+  });
+
+  it('splits a multi-account CSV by account number', () => {
+    const csv = [
+      'BSB Number,Account Number,Transaction Date,Narration,Cheque Number,Debit,Credit,Balance,Transaction Type',
+      '302-162,1111111,19/10/2026,"T",,-500.00,,100.00,TFD',
+      '302-162,1111111,19/10/2026,"COLES 123 PERTH AUS",,-20.00,,600.00,WDC',
+      '302-162,2222222,19/10/2026,"T",,,500.00,900.00,TFC',
+    ].join('\n');
+    store.createAccount(db, { name: 'Everyday', number: '302-162 1111111' });
+    store.createAccount(db, { name: 'Bills', number: '302-162 2222222' });
+    const r = importCsv(db, parseBankCsv(csv), { account: 'Everyday' });
+    expect(r.map((x) => [x.account, x.inserted])).toEqual([['Everyday', 2], ['Bills', 1]]);
+    expect(importCsv(db, parseBankCsv(csv), {}).every((x) => x.inserted === 0)).toBe(true);
+  });
+
+  it('remembers a new account number on the chosen account, and refuses a mismatched one', () => {
+    const r = importCsv(db, parseBankCsv(sample()), { account: 'Everyday' });
+    expect(r[0].inserted).toBe(5);
+    expect(store.findAccount(db, 'Everyday')?.number).toBe('1234567');
+    const other = sample().replaceAll('1234567', '7654321');
+    expect(() => importCsv(db, parseBankCsv(other), { account: 'Everyday' })).toThrow(/7654321/);
+    const both = `${sample().trim()}\n${other.split('\n').slice(1).join('\n')}`.replaceAll('1234567', '5555555');
+    expect(() => importCsv(db, parseBankCsv(both), { account: 'New' })).toThrow(/5555555 or 7654321/);
   });
 
   it('undoes an import', () => {

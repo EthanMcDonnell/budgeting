@@ -46,7 +46,8 @@ export interface ParsedCsv {
   format: 'bankwest' | 'headed' | 'headerless';
   columns: Partial<Record<Field, number>>;
   accountNumbers: string[];
-  transactions: IncomingTransaction[];
+  /** accountNumber is set when the file has an account number column (Bankwest's export can cover several accounts). */
+  transactions: (IncomingTransaction & { accountNumber?: string })[];
   skippedRows: { line: number; reason: string }[];
 }
 
@@ -105,7 +106,7 @@ export function parseBankCsv(text: string): ParsedCsv {
     throw new Error('Could not find an amount, debit or credit column');
   }
 
-  const transactions: IncomingTransaction[] = [];
+  const transactions: ParsedCsv['transactions'] = [];
   const skippedRows: ParsedCsv['skippedRows'] = [];
   const accountNumbers = new Set<string>();
 
@@ -140,7 +141,7 @@ export function parseBankCsv(text: string): ParsedCsv {
     if (acct) accountNumbers.add(acct);
 
     const balance = parseMoney(get('balance'));
-    transactions.push({ date, description, amount, balance, merchant: get('merchant') || null });
+    transactions.push({ date, description, amount, balance, merchant: get('merchant') || null, ...(acct && { accountNumber: acct }) });
   });
 
   return { format, columns, accountNumbers: [...accountNumbers], transactions, skippedRows };

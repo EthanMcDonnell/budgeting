@@ -1,6 +1,8 @@
+import type { ParsedCsv } from './csv.ts';
 import type { DB } from './db.ts';
 import {
-  UserError, compileRules, dedupeKey, findCategory, listRules, matchRules, fillMemos, resolveAccount, resolvePayee,
+  UserError, compileRules, dedupeKey, findAccount, findCategory, listAccounts, listRules, matchRules, fillMemos, resolveAccount,
+  resolvePayee, updateAccount,
 } from './store.ts';
 import { linkRecurring } from './recurring.ts';
 import { normalizeDate, toCents } from './util.ts';
@@ -87,6 +89,38 @@ export function importTransactions(db: DB, opts: ImportOptions): ImportResult {
 }
 
 const ROLLBACK = Symbol('rollback');
+
+/**
+ * Imports a parsed CSV. A file covering several accounts (Bankwest's full export) is split by account number and each
+ * part goes into the account with that number. `account` takes the rows whose number no account has yet (only one
+ * such number per file), and remembers the number on that account for next time.
+ */
+export function importCsv(db: DB, parsed: ParsedCsv, opts: Omit<ImportOptions, 'source' | 'transactions'>): ImportResult[] {
+  const groups = new Map<string, IncomingTransaction[]>();
+  for (const { accountNumber = '', ...t } of parsed.transactions) {
+    if (!groups.has(accountNumber)) groups.set(accountNumber, []);
+    groups.get(accountNumber)!.push(t);
+  }
+  const digits = (s: string) => s.replace(/\D/g, '');
+  const accounts = listAccounts(db);
+  const owner = (n: string) => (n ? accounts.find((a) => a.number && digits(a.number).endsWith(digits(n))) : undefined);
+  const unknown = [...groups.keys()].filter((n) => !owner(n));
+  if (unknown.length > 1) {
+    throw new UserError(`No account has number ${unknown.filter(Boolean).join(' or ')} yet. Import each account's rows on their own once, so the number is remembered.`);
+  }
+  const chosen = findAccount(db, opts.account);
+  if (unknown[0] && chosen?.number) {
+    throw new UserError(`These rows are for account number ${unknown[0]}, but ${chosen.name} is ${chosen.number}. Choose another account or a new one.`);
+  }
+  const run = () => [...groups].map(([n, transactions]) => {
+    const target = owner(n);
+    const r = importTransactions(db, { ...opts, account: target?.id ?? opts.account, source: 'csv', transactions });
+    const into = !target && n && !r.dry_run ? findAccount(db, r.account) : null;
+    if (into && !into.number) updateAccount(db, into.id, { number: n });
+    return r;
+  });
+  return opts.dryRun ? run() : db.transaction(run)();
+}
 
 function doImport(db: DB, opts: ImportOptions): ImportResult {
   const { account, created } = resolveAccount(db, opts.account);
