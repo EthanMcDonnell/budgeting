@@ -220,7 +220,9 @@ function BudgetPanel({ s }: { s: Summary }) {
               const save = b.kind === 'save';
               const note = targetNote(b, followers);
               const pending = save && waiting && b.actual_cents <= 0;
-              const state = save ? 'ok' : b.actual_cents > target ? 'bad' : b.actual_cents >= target * 0.9 && b.actual_cents > 0 ? 'warn' : 'ok';
+              // A bucket that follows recurring payments is meant to be used up, and isn't spent evenly through the month.
+              const scheduled = b.schedule != null;
+              const state = save ? 'ok' : b.actual_cents > target ? 'bad' : b.actual_cents >= target * 0.9 && b.actual_cents > 0 && !scheduled ? 'warn' : 'ok';
               const left = target - b.actual_cents;
               return (
                 // A spending bucket opens its transactions; savings has no categories, so there's nothing to list.
@@ -232,7 +234,7 @@ function BudgetPanel({ s }: { s: Summary }) {
                       : <>{b.actual_cents < 0 && '−'}{moneyWhole(Math.abs(b.actual_cents))} <span className="muted">/ {moneyWhole(target)}</span></>}
                   </div>
                   {target > 0 && (
-                    <Meter spent={Math.max(b.actual_cents, 0)} budget={target} pace={save ? null : pace} state={state} small
+                    <Meter spent={Math.max(b.actual_cents, 0)} budget={target} pace={save || scheduled ? null : pace} state={state} small
                       reserved={b.reserved.cents} reservedTitle={dueTitle(b.reserved)} label={`${b.name} against its target`} />
                   )}
                   <div className="state">

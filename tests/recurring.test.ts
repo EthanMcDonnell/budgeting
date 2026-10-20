@@ -223,6 +223,18 @@ describe('recurring payments still due in a month', () => {
     expect(bucket('1998-10', 'Rent')).toMatchObject({ mode: 'amount', target_cents: 208000, schedule: null });
     expect(() => store.updateBucket(db, 'Rent', { follows_recurring: true, balances: true })).toThrow();
   });
+
+  it('counts what was paid plus what is still due when the payment day changes mid-month', () => {
+    store.createBucket(db, { name: 'Rent', follows_recurring: true });
+    store.assignCategories(db, 'Rent', ['Rent']);
+    // Thursdays 1, 8 and 15 Oct, then Wednesday 21 Oct, with 28 Oct still to come: five, not October's four Wednesdays.
+    importTransactions(db, {
+      account: 'Everyday', source: 'csv',
+      transactions: ['1998-09-24', '1998-10-01', '1998-10-08', '1998-10-15', '1998-10-21'].map((d) => tx(d, 'To Riley Rent', -480)),
+    });
+    const rent = budgetPlan(db, '1998-10', '1998-10-23').buckets.find((b) => b.name === 'Rent')!;
+    expect(rent).toMatchObject({ target_cents: 5 * 48000, schedule: { items: [{ name: 'Rent', count: 5 }] } });
+  });
 });
 
 describe('quarterly and yearly bills spread across months', () => {

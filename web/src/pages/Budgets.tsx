@@ -215,8 +215,9 @@ function bucketStatus(b: BudgetBucket, waiting: boolean) {
   const target = b.target_cents;
   const actual = b.actual_cents;
   const pending = save && waiting && actual <= 0;
+  // A bucket that follows recurring payments is meant to be used up, so it only warns once it's over.
   const state: 'ok' | 'warn' | 'bad' = save || target == null ? 'ok'
-    : actual > target ? 'bad' : actual >= target * 0.9 && actual > 0 ? 'warn' : 'ok';
+    : actual > target ? 'bad' : actual >= target * 0.9 && actual > 0 && b.mode !== 'recurring' ? 'warn' : 'ok';
   const left = target == null ? null : target - actual;
   const used = !pending && target && actual >= 0 ? `${Math.round((actual / target) * 100)}%` : null;
 
@@ -309,7 +310,7 @@ function BucketName({ b, color, open, onToggle }: Pick<BucketViewProps, 'b' | 'c
 function BucketMeter({ b, st, pace, small }: { b: BudgetBucket; st: ReturnType<typeof bucketStatus>; pace: number | null; small?: boolean }) {
   if (st.target == null || st.target <= 0) return null;
   return (
-    <Meter spent={Math.max(st.actual, 0)} budget={st.target} pace={st.save ? null : pace} state={st.state} small={small}
+    <Meter spent={Math.max(st.actual, 0)} budget={st.target} pace={st.save || b.mode === 'recurring' ? null : pace} state={st.state} small={small}
       reserved={st.reserved} reservedTitle={st.reserved ? reservedTitle(b.reserved) : undefined}
       label={`${b.name}: ${st.save ? 'saved' : 'spent'} against target${st.reserved ? `, ${moneyWhole(st.reserved)} recurring still due` : ''}`} />
   );

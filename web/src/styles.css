@@ -390,9 +390,10 @@ a.plain-link { color: inherit; }
 .meter-fill.warn { background: var(--warn); }
 .meter-fill.bad { background: var(--bad); }
 /* Still to pay (recurring payments due): a dashed outline continuing from the fill. */
-.meter-reserved { position: absolute; top: 0; bottom: 0; border-radius: 99px; border: 1.5px dashed color-mix(in srgb, var(--accent) 80%, transparent); }
-.meter-reserved.over { border-color: color-mix(in srgb, var(--bad) 85%, transparent); }
-.meter-sm .meter-reserved { border-width: 1.5px; }
+/* Recurring payments still due: stripes, which stay legible at any size (a dashed border breaks up when small). */
+.meter-reserved, .due-note::before { --due: color-mix(in srgb, var(--accent) 70%, transparent); background: repeating-linear-gradient(-45deg, var(--due) 0 2px, transparent 2px 4.5px); }
+.meter-reserved { position: absolute; top: 0; bottom: 0; border-radius: 99px; }
+.meter-reserved.over, .due-note.over::before { --due: color-mix(in srgb, var(--bad) 80%, transparent); }
 .meter-tick { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--ink); border-radius: 1px; }
 .meter-sm { height: 6px; }
 .meter-sm .meter-tick { top: -3px; bottom: -3px; }
@@ -619,8 +620,7 @@ dialog.modal::backdrop { background: rgba(10, 12, 16, 0.45); }
 .bi-cat-move { grid-column: 1 / -1; margin-top: 6px; }
 .bi-empty { margin-top: 10px; font-size: 13px; }
 .due-note { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--muted); }
-.due-note::before { content: ''; width: 12px; height: 6px; border-radius: 99px; border: 1.5px dashed color-mix(in srgb, var(--accent) 80%, transparent); flex: none; }
-.due-note.over::before { border-color: color-mix(in srgb, var(--bad) 85%, transparent); }
+.due-note::before { content: ''; width: 14px; height: 6px; border-radius: 99px; flex: none; }
 .progress-cell .due-note { margin-top: 5px; }
 /* Why a bucket's target moves this month: four or five rent weeks, or balancing a bucket that has them. */
 .target-note { display: block; font-size: 12.5px; color: var(--muted); }

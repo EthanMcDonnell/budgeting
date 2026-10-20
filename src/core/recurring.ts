@@ -377,13 +377,20 @@ export function upcomingInMonth(db: DB, month: string, today = todayIso()) {
 export function scheduledInMonth(db: DB, month: string, today = todayIso()) {
   const { start, end } = monthRange(month);
   const out: { id: number; name: string; category: string | null; each_cents: number; count: number | null; cents: number; average_cents: number }[] = [];
+  const paidIn = db.prepare('SELECT COUNT(*) AS n FROM transactions WHERE recurring_id = ? AND amount_cents < 0 AND date >= ? AND date < ?');
   for (const r of listRecurring(db, today, { suggestions: false }).items) {
     const each = r.your_share_cents ?? r.typical_cents;
     if (!r.active || !each) continue;
     const average = Math.round(each * PER_MONTH[r.frequency]);
     const anchor = r.last_paid?.date ?? r.next_due;
     let count: number | null = null;
-    if (anchor && (r.frequency === 'weekly' || r.frequency === 'fortnightly')) {
+    const weekly = r.frequency === 'weekly' || r.frequency === 'fortnightly';
+    const paid = weekly ? (paidIn.get(r.id, start, end) as { n: number }).n : 0;
+    if (weekly && (paid > 0 || month >= today.slice(0, 7))) {
+      // What's been paid plus what's still due, since the day can change mid-month (rent moving from Thursdays to Wednesdays).
+      count = paid;
+      for (let d = r.next_due; d && d < end; d = nextDate(d, r.frequency)) if (d >= start) count++;
+    } else if (anchor && weekly) {
       const step = (r.frequency === 'weekly' ? 7 : 14) * DAY;
       let t = toTime(anchor);
       while (t >= toTime(start)) t -= step;
