@@ -88,7 +88,8 @@ Income against spending for 6, 12 or 24 months, broken down by category.
 - CSV upload on the Import page, or `import_csv_file` over MCP
 - Reads Bankwest and Up exports and most other bank CSVs, with or without a header row
 - Exact duplicates are skipped. Near-duplicates (same date and amount, different wording) are held back for you to check
-- Pending card authorisations and $0 rows are skipped
+- Pending card authorisations and $0 rows are skipped. Pending ones come in with a later export once they settle
+- The Import page shows which dates each account's imports cover and flags gaps. Where the bank gives running balances, a gap is checked against them, so a quiet week isn't flagged and a missing one shows how much is missing
 - Any import can be undone
 
 **Keeping it tidy**

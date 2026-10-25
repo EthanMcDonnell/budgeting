@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type DB } from '../src/core/db.ts';
+import { coverage } from '../src/core/coverage.ts';
 import { parseBankCsv, parseCsv } from '../src/core/csv.ts';
 import { importCsv, importTransactions } from '../src/core/importer.ts';
 import { budgetPlan, monthSummary, trends } from '../src/core/reports.ts';
@@ -50,7 +51,8 @@ describe('csv', () => {
     ].join('\n'));
     expect(p.format).toBe('bankwest');
     expect(p.transactions).toHaveLength(1);
-    expect(p.skippedRows.map((r) => r.reason)).toEqual(['Pending authorisation; imported once it settles', 'Zero amount']);
+    expect(p.skippedRows.map((r) => r.reason)).toEqual(['Zero amount']);
+    expect(p.pending).toHaveLength(1);
   });
 
   it('reads an Up Bank export', () => {
@@ -158,6 +160,63 @@ describe('import', () => {
   });
 });
 
+
+describe('coverage', () => {
+  const HEAD = 'BSB Number,Account Number,Transaction Date,Narration,Cheque Number,Debit,Credit,Balance,Transaction Type';
+  // Bankwest lists newest first, with the balance after each row.
+  const row = (date: string, text: string, amount: number, balance: number, type = 'WDC') =>
+    `302-162,1234567,${date},"${text}",,${amount < 0 ? amount.toFixed(2) : ''},${amount > 0 ? amount.toFixed(2) : ''},${balance.toFixed(2)},${type}`;
+  const csv = (...rows: string[]) => parseBankCsv([HEAD, ...rows].join('\n'));
+  const imp = (...rows: string[]) => importCsv(db, csv(...rows), { account: 'Everyday' })[0];
+
+  it('keeps pending authorisations apart and covers only the days before them', () => {
+    const p = csv(
+      row('05/09/2026', 'AUTHORISATION ONLY - EFTPOS PURCHASE AT CAFE', -6, 900, 'DAU'),
+      row('05/09/2026', 'BAKERY', -4, 900),
+      row('03/09/2026', 'GROCER', -96, 904),
+    );
+    expect(p.skippedRows).toEqual([]);
+    expect(p.pending).toMatchObject([{ date: '2026-09-05', amount: -6, accountNumber: '1234567' }]);
+
+    const r = importCsv(db, p, { account: 'Everyday' })[0];
+    expect(r.inserted).toBe(2);
+    expect(r.coverage).toEqual({ covered_to: '2026-09-04', next_export_from: '2026-09-05', gaps: [] });
+
+    // Starting the next export on the pending date leaves no gap.
+    const next = imp(row('07/09/2026', 'TRAIN', -3, 891), row('05/09/2026', 'EFTPOS PURCHASE AT CAFE', -6, 894), row('05/09/2026', 'BAKERY', -4, 900));
+    expect(next.inserted).toBe(2);
+    expect(next.coverage.gaps).toEqual([]);
+    expect(next.coverage.covered_to).toBe('2026-09-07');
+  });
+
+  it('treats a gap as quiet when the balances chain across it, and flags what they say is missing', () => {
+    imp(row('03/09/2026', 'GROCER', -96, 904), row('01/09/2026', 'PAY', 1000, 1000, 'PAY'));
+    // Nothing happened 4–9 Sep: the balance before the 10th is the 3rd's closing balance.
+    expect(imp(row('10/09/2026', 'TRAIN', -4, 900)).coverage.gaps).toEqual([]);
+    // 30 is missing between the 11th and the 19th.
+    const r = imp(row('20/09/2026', 'BAKERY', -10, 860));
+    expect(r.coverage.gaps).toEqual([{ from: '2026-09-11', to: '2026-09-19', missing_cents: -3000 }]);
+    expect(coverage(db)[0].segments).toEqual([{ start: '2026-09-01', end: '2026-09-10' }, { start: '2026-09-20', end: '2026-09-20' }]);
+  });
+
+  it('reports a gap as unchecked when there are no balances', () => {
+    importTransactions(db, { account: 'Up', source: 'csv', transactions: [{ date: '2026-09-01', description: 'A', amount: -1 }] });
+    const r = importTransactions(db, { account: 'Up', source: 'csv', transactions: [{ date: '2026-09-09', description: 'B', amount: -1 }] });
+    expect(r.coverage.gaps).toEqual([{ from: '2026-09-02', to: '2026-09-08', missing_cents: null }]);
+  });
+
+  it('records an import that adds nothing new, unless its dates were already covered', () => {
+    store.addManualTransaction(db, { account: 'Everyday', date: '2026-09-03', description: 'GROCER', amount: -96 });
+    const first = imp(row('03/09/2026', 'GROCER', -96, 904));
+    expect(first.inserted).toBe(0);
+    expect(first.import_id).not.toBeNull();
+    expect(imp(row('03/09/2026', 'GROCER', -96, 904)).import_id).toBeNull();
+    expect(store.listImports(db)).toHaveLength(1);
+    // A dry run leaves no record behind.
+    importCsv(db, csv(row('09/09/2026', 'TRAIN', -4, 900)), { account: 'Everyday', dryRun: true });
+    expect(store.listImports(db)).toHaveLength(1);
+  });
+});
 
 describe('reports', () => {
   beforeEach(() => {

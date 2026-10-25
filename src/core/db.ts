@@ -233,6 +233,11 @@ const MIGRATIONS: (string | ((db: DB) => void))[] = [
   ALTER TABLE buckets ADD COLUMN follows_recurring INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE buckets ADD COLUMN balances INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- The earliest pending card authorisation in the file. They're skipped and settle under their own date, so an import
+  -- only covers the days before it.
+  ALTER TABLE imports ADD COLUMN pending_from TEXT;
+  `,
 ];
 
 export function openDb(file: string = DEFAULT_DB_PATH): DB {

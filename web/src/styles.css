@@ -398,6 +398,18 @@ a.plain-link { color: inherit; }
 .meter-sm { height: 6px; }
 .meter-sm .meter-tick { top: -3px; bottom: -3px; }
 .meter-legend { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+.coverage-row { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr); align-items: center; gap: 4px 16px; }
+.coverage-track { overflow: hidden; }
+.coverage-segment, .coverage-gap { position: absolute; top: 0; bottom: 0; min-width: 2px; }
+.coverage-segment { background: var(--accent); }
+.coverage-gap { min-width: 4px; background: var(--bad); }
+.coverage-gap.unchecked { background: var(--warn); }
+.coverage-note { grid-column: 2; font-size: 13px; }
+.coverage-note.bad { color: var(--bad-ink); }
+@media (max-width: 640px) {
+  .coverage-row { grid-template-columns: minmax(0, 1fr); }
+  .coverage-note { grid-column: 1; }
+}
 
 .budget-list { display: flex; flex-direction: column; }
 .budget-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--line); }

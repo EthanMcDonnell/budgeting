@@ -2,6 +2,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_DB_PATH, PROJECT_ROOT, openDb } from '../core/db.ts';
+import { coverage } from '../core/coverage.ts';
 import { parseBankCsv } from '../core/csv.ts';
 import { importCsv } from '../core/importer.ts';
 import * as recurring from '../core/recurring.ts';
@@ -167,6 +168,7 @@ app.put('/api/shares/:id/settled', (req, res) => {
 // ---------- imports ----------
 
 app.get('/api/imports', (_req, res) => res.json(store.listImports(db)));
+app.get('/api/coverage', (_req, res) => res.json(coverage(db)));
 app.delete('/api/imports/:id', (req, res) => res.json({ deleted_transactions: store.deleteImport(db, id(req)) }));
 
 app.post('/api/import/csv', (req, res) => {
@@ -190,7 +192,9 @@ app.post('/api/import/csv', (req, res) => {
     invalid: sum('invalid'), uncategorized: sum('uncategorized'),
     period: { start: dates[0] ?? null, end: dates.at(-1) ?? null },
     rows: results.flatMap((r) => r.rows.map((x) => ({ ...x, account: r.account }))),
-    format: parsed.format, skipped_rows: parsed.skippedRows,
+    format: parsed.format, skipped_rows: parsed.skippedRows, pending: parsed.pending.length,
+    gaps: results.flatMap((r) => r.coverage.gaps.map((g) => ({ ...g, account: r.account }))),
+    next_export_from: results.map((r) => ({ account: r.account, date: r.coverage.next_export_from })),
   });
 });
 

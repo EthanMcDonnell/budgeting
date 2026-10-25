@@ -4,8 +4,9 @@ import {
   UserError, compileRules, dedupeKey, findAccount, findCategory, listAccounts, listRules, matchRules, fillMemos, resolveAccount,
   resolvePayee, updateAccount,
 } from './store.ts';
+import { accountCoverage, coveredSpan, type CoverageGap } from './coverage.ts';
 import { linkRecurring } from './recurring.ts';
-import { normalizeDate, toCents } from './util.ts';
+import { addDays, normalizeDate, toCents } from './util.ts';
 
 export interface IncomingTransaction {
   date: string;
@@ -33,6 +34,8 @@ export interface ImportOptions {
   closingBalance?: number | null;
   /** Who chose the categories supplied in `transactions`. */
   categorizedBy?: 'ai' | 'user';
+  /** Earliest pending authorisation the file left out (see ParsedCsv.pending): the import covers only the days before it. */
+  pendingFrom?: string | null;
 }
 
 export type RowStatus = 'new' | 'duplicate' | 'possible_duplicate' | 'invalid';
@@ -68,6 +71,8 @@ export interface ImportResult {
     statement_net: number; difference: number; ok: boolean;
   };
   rows: PreviewRow[];
+  /** What the account's imports cover with this one included. `gaps` are only those next to this file's dates. */
+  coverage: { covered_to: string | null; next_export_from: string | null; gaps: CoverageGap[] };
 }
 
 export function importTransactions(db: DB, opts: ImportOptions): ImportResult {
@@ -101,6 +106,7 @@ export function importCsv(db: DB, parsed: ParsedCsv, opts: Omit<ImportOptions, '
     if (!groups.has(accountNumber)) groups.set(accountNumber, []);
     groups.get(accountNumber)!.push(t);
   }
+  const pendingFrom = (n: string) => parsed.pending.filter((p) => (p.accountNumber ?? '') === n).map((p) => p.date).sort()[0] ?? null;
   const digits = (s: string) => s.replace(/\D/g, '');
   const accounts = listAccounts(db);
   const owner = (n: string) => (n ? accounts.find((a) => a.number && digits(a.number).endsWith(digits(n))) : undefined);
@@ -114,7 +120,7 @@ export function importCsv(db: DB, parsed: ParsedCsv, opts: Omit<ImportOptions, '
   }
   const run = () => [...groups].map(([n, transactions]) => {
     const target = owner(n);
-    const r = importTransactions(db, { ...opts, account: target?.id ?? opts.account, source: 'csv', transactions });
+    const r = importTransactions(db, { ...opts, account: target?.id ?? opts.account, source: 'csv', transactions, pendingFrom: pendingFrom(n) });
     const into = !target && n && !r.dry_run ? findAccount(db, r.account) : null;
     if (into && !into.number) updateAccount(db, into.id, { number: n });
     return r;
@@ -214,13 +220,21 @@ function doImport(db: DB, opts: ImportOptions): ImportResult {
 
   let importId: number | null = null;
   const categorizedBy = opts.categorizedBy ?? (opts.source === 'csv' ? 'user' : 'ai');
-  if (toInsert.length > 0) {
+  const pendingFrom = opts.pendingFrom ?? null;
+  // Every import is recorded, even one that adds nothing, so the history shows which dates have been checked.
+  // A re-import of dates already covered adds nothing to that, so it's left out.
+  const before = start && end ? accountCoverage(db, account.id, account.name) : null;
+  const span = start && end ? coveredSpan({ period_start: start, period_end: end, pending_from: pendingFrom }) : null;
+  const alreadyCovered = !!span && (span.end < span.start || before!.segments.some((g) => g.start <= span.start && span.end <= g.end));
+  if (span && (toInsert.length > 0 || !alreadyCovered)) {
     importId = Number(
-      db.prepare(`INSERT INTO imports (source, label, account_id, period_start, period_end, inserted, skipped)
-                  VALUES (?, ?, ?, ?, ?, ?, ?)`)
-        .run(opts.source, opts.label ?? null, account.id, start, end, toInsert.length, rows.length - toInsert.length)
+      db.prepare(`INSERT INTO imports (source, label, account_id, period_start, period_end, pending_from, inserted, skipped)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(opts.source, opts.label ?? null, account.id, start, end, pendingFrom, toInsert.length, rows.length - toInsert.length)
         .lastInsertRowid,
     );
+  }
+  if (toInsert.length > 0) {
     const ins = db.prepare(`INSERT INTO transactions (account_id, date, description, payee_id, amount_cents,
         balance_cents, category_id, categorized_by, notes, memo, source, import_id, dedupe_key)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -235,6 +249,10 @@ function doImport(db: DB, opts: ImportOptions): ImportResult {
   }
 
   const count = (s: RowStatus) => rows.filter((r) => r.status === s).length;
+  const after = accountCoverage(db, account.id, account.name);
+  // Gaps that touch this file's dates: the ones it may have opened or failed to close.
+  const near = span && { from: addDays(span.start, -1), to: addDays(span.end, 1) };
+  const gaps = near ? after.gaps.filter((g) => g.from <= near.to && g.to >= near.from) : [];
   return {
     dry_run: !!opts.dryRun,
     import_id: opts.dryRun ? null : importId,
@@ -249,6 +267,7 @@ function doImport(db: DB, opts: ImportOptions): ImportResult {
     unknown_categories: [...unknownCategories],
     period: { start, end },
     reconciliation,
+    coverage: { covered_to: after.covered_to, next_export_from: after.next_export_from, gaps },
     rows: rows.map(({ category_id: _c, payee_id: _p, balance_cents: _b, notes: _n, ...r }) => r),
   };
 }

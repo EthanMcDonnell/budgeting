@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { openDb } from '../core/db.ts';
+import { coverage, type CoverageGap } from '../core/coverage.ts';
 import { parseBankCsv } from '../core/csv.ts';
 import { importCsv, importTransactions } from '../core/importer.ts';
 import * as recurring from '../core/recurring.ts';
@@ -105,6 +106,13 @@ tool('list_rules', 'Lists rules: description pattern -> category and/or payee (m
 
 // ---------- importing ----------
 
+const gapOut = (g: CoverageGap) => ({
+  from: g.from, to: g.to,
+  ...(g.missing_cents == null ? { checked: false, note: 'No balances to check: may be quiet, or transactions may be missing' } : { missing: fromCents(g.missing_cents) }),
+});
+const coverageOut = (c: { covered_to: string | null; next_export_from: string | null; gaps: CoverageGap[] }) =>
+  ({ covered_to: c.covered_to, next_export_from: c.next_export_from, gaps: c.gaps.map(gapOut) });
+
 const incoming = z.object({
   date: z.string().describe('YYYY-MM-DD preferred; DD/MM/YYYY accepted'),
   description: z.string().describe('Transaction description exactly as printed on the statement'),
@@ -135,9 +143,10 @@ verify every line was captured. Run with dry_run=true first and check the reconc
       openingBalance: a.opening_balance, closingBalance: a.closing_balance,
       possibleDuplicates: a.possible_duplicates, dryRun: a.dry_run, categorizedBy: 'ai',
     });
-    const { rows, ...rest } = r;
+    const { rows, coverage: cov, ...rest } = r;
     return {
       ...rest,
+      coverage: coverageOut(cov),
       invalid_rows: rows.filter((x) => x.status === 'invalid'),
       duplicate_rows: rows.filter((x) => x.status === 'duplicate' || x.status === 'possible_duplicate')
         .map((x) => ({ index: x.index, status: x.status, date: x.date, description: x.description, amount: x.amount_cents / 100, matches_id: x.matches_id })),
@@ -158,14 +167,25 @@ tool('import_csv_file',
     const results = importCsv(db, parsed, {
       account: a.account, label: path.basename(file), possibleDuplicates: a.possible_duplicates, dryRun: a.dry_run,
     });
+    const numbers = new Map(store.listAccounts(db).filter((x) => x.number).map((x) => [x.number!.replace(/\D/g, ''), x.name]));
+    const accountFor = (n?: string) => (n ? [...numbers].find(([num]) => num.endsWith(n.replace(/\D/g, '')))?.[1] ?? n : undefined);
     return {
       format: parsed.format, unreadable_rows: parsed.skippedRows,
-      imports: results.map(({ rows, ...rest }) => ({
+      pending: parsed.pending.map((p) => ({ date: p.date, description: p.description, amount: p.amount, account: accountFor(p.accountNumber) })),
+      imports: results.map(({ rows, coverage: cov, ...rest }) => ({
         ...rest,
+        coverage: coverageOut(cov),
         duplicate_rows: rows.filter((x) => x.status !== 'new').map((x) => ({ index: x.index, status: x.status, date: x.date, description: x.description, amount: x.amount_cents / 100 })),
       })),
     };
   });
+
+tool('import_coverage',
+  'Which dates each account\'s imports cover, gaps between them, and where the next export should start. A gap whose running balances still chain had no activity and is not listed; "missing" is the net amount the balances say is absent; checked=false means the account has no balances (Up, most PDFs), so it may just have been quiet.',
+  {},
+  () => coverage(db).map((c) => ({
+    account: c.account, segments: c.segments, ...coverageOut(c),
+  })), true);
 
 tool('list_imports', 'Lists past imports (most recent first) with their ids, for review or undo.', {},
   () => store.listImports(db) as Json, true);

@@ -1,8 +1,8 @@
-import { FileUp, Sparkles, Undo2 } from 'lucide-react';
+import { CalendarX, FileUp, Sparkles, Undo2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { api, useApi, type Meta } from '../api.ts';
 import { CopyBlock, ErrorNotice, useAction } from '../components/ui.tsx';
-import { dateLabel, money } from '../format.ts';
+import { dateLabel, money, todayIso } from '../format.ts';
 
 interface PreviewRow {
   index: number; status: 'new' | 'duplicate' | 'possible_duplicate' | 'invalid'; date: string | null; description: string;
@@ -12,7 +12,13 @@ interface PreviewRow {
 interface CsvResult {
   dry_run: boolean; account: string; accounts: { account: string; new: number }[]; inserted: number; duplicates: number; possible_duplicates: number;
   invalid: number; uncategorized: number; period: { start: string | null; end: string | null }; rows: PreviewRow[];
-  format: string; skipped_rows: { line: number; reason: string }[];
+  format: string; skipped_rows: { line: number; reason: string }[]; pending: number;
+  gaps: (Gap & { account: string })[]; next_export_from: { account: string; date: string | null }[];
+}
+interface Gap { from: string; to: string; missing_cents: number | null }
+interface Coverage {
+  account_id: number; account: string; segments: { start: string; end: string }[]; gaps: Gap[];
+  covered_to: string | null; next_export_from: string | null;
 }
 interface ImportRow {
   id: number; source: string; label: string | null; account: string | null; period_start: string | null; period_end: string | null;
@@ -26,7 +32,7 @@ export default function Import({ meta }: { meta: Meta | null }) {
   const run = useAction();
 
   const undo = (i: ImportRow) => {
-    if (!confirm(`Undo "${i.label ?? 'import'}"? This deletes its ${i.tx_count} transactions.`)) return;
+    if (!confirm(i.tx_count ? `Undo "${i.label ?? 'import'}"? This deletes its ${i.tx_count} transactions.` : `Remove "${i.label ?? 'import'}" from the history? It added no transactions.`)) return;
     run(() => api<{ deleted_transactions: number }>(`/imports/${i.id}`, { method: 'DELETE' }), (r) => `Removed ${r.deleted_transactions} transactions`);
   };
 
@@ -61,6 +67,8 @@ export default function Import({ meta }: { meta: Meta | null }) {
 
         <CsvImport meta={meta} />
       </div>
+
+      <CoveragePanel />
 
       <section className="panel">
         <div className="panel-head"><h2>History</h2><span className="hint">Undo removes everything an import added</span></div>
@@ -180,9 +188,22 @@ function CsvImport({ meta }: { meta: Meta | null }) {
               {preview.duplicates > 0 && <span className="badge"><i className="status-dot status-duplicate" />{preview.duplicates} already imported</span>}
               {preview.possible_duplicates > 0 && <span className="badge"><i className="status-dot status-possible_duplicate" />{preview.possible_duplicates} possible duplicates</span>}
               {preview.invalid + preview.skipped_rows.length > 0 && <span className="badge"><i className="status-dot status-invalid" />{preview.invalid + preview.skipped_rows.length} unreadable</span>}
+              {preview.pending > 0 && <span className="badge" title="Card authorisations still pending. They come in with a later export once they settle">{preview.pending} pending</span>}
               {preview.accounts.length > 1 && <span className="muted">{preview.accounts.map((a) => `${a.account}: ${a.new} new`).join(' · ')}</span>}
               {preview.period.start && <span className="muted">{dateLabel(preview.period.start, true)} – {dateLabel(preview.period.end!, true)}</span>}
             </div>
+            {preview.gaps.map((g) => (
+              <div key={`${g.account}-${g.from}`} className="notice warn">
+                <CalendarX size={16} />
+                <span>{g.account}: <GapText gap={g} />. Export from {dateLabel(g.from, true)} to fill it.</span>
+              </div>
+            ))}
+            {preview.pending > 0 && preview.next_export_from.some((n) => n.date) && (
+              <p className="muted" style={{ fontSize: 13 }}>
+                Pending purchases settle under their own date, so start the next export from{' '}
+                {preview.next_export_from.filter((n) => n.date).map((n) => `${dateLabel(n.date!, true)}${preview.next_export_from.length > 1 ? ` (${n.account})` : ''}`).join(', ')}.
+              </p>
+            )}
             {preview.possible_duplicates > 0 && (
               <label className="row" style={{ gap: 8 }}>
                 <input type="checkbox" className="check" checked={includePossible} onChange={(e) => setIncludePossible(e.target.checked)} />
@@ -222,6 +243,61 @@ function CsvImport({ meta }: { meta: Meta | null }) {
             </div>
           </div>
         )}
+      </div>
+    </section>
+  );
+}
+
+function GapText({ gap }: { gap: Gap }) {
+  const range = gap.from === gap.to ? dateLabel(gap.from, true)
+    : `${dateLabel(gap.from, gap.from.slice(0, 4) !== gap.to.slice(0, 4))} – ${dateLabel(gap.to, true)}`;
+  if (gap.missing_cents == null) return <>{range} not imported <span className="muted">(no balances to check, so it may just have been quiet)</span></>;
+  return <>{range} not imported: the balances say {money(Math.abs(gap.missing_cents))} {gap.missing_cents > 0 ? 'came in' : 'went out'} that isn't here</>;
+}
+
+const DAY = 86_400_000;
+const dayNumber = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / DAY;
+
+/** Each account's imported dates on one timeline, with gaps the balances can't account for flagged. */
+function CoveragePanel() {
+  const cov = useApi<Coverage[]>('/coverage');
+  const list = cov.data ?? [];
+  if (list.length === 0) return null;
+  const first = Math.min(...list.flatMap((c) => c.segments.map((s) => dayNumber(s.start))));
+  const last = Math.max(dayNumber(todayIso()), ...list.flatMap((c) => c.segments.map((s) => dayNumber(s.end))));
+  const span = Math.max(1, last - first + 1);
+  const pos = (from: string, to: string) => ({
+    left: `${((dayNumber(from) - first) / span) * 100}%`,
+    width: `${((dayNumber(to) - dayNumber(from) + 1) / span) * 100}%`,
+  });
+  const gapCount = list.reduce((n, c) => n + c.gaps.length, 0);
+
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h2>Coverage</h2>
+        <span className="hint">{gapCount ? `${gapCount} gap${gapCount === 1 ? '' : 's'} between imports` : 'No gaps between imports'}</span>
+      </div>
+      <div className="panel-body stack">
+        {list.map((c) => (
+          <div key={c.account_id} className="coverage-row">
+            <div>
+              <div className="desc-main">{c.account}</div>
+              {c.covered_to && <div className="desc-sub">Up to {dateLabel(c.covered_to, true)}</div>}
+            </div>
+            <div className="meter meter-sm coverage-track" role="img" aria-label={`${c.account}: imported ${c.segments.map((s) => `${dateLabel(s.start, true)} to ${dateLabel(s.end, true)}`).join(', ')}`}>
+              {c.segments.map((s) => <span key={s.start} className="coverage-segment" style={pos(s.start, s.end)} />)}
+              {c.gaps.map((g) => <span key={g.from} className={`coverage-gap ${g.missing_cents == null ? 'unchecked' : ''}`} style={pos(g.from, g.to)} />)}
+            </div>
+            {c.gaps.map((g) => (
+              <div key={g.from} className={`coverage-note ${g.missing_cents == null ? 'warn' : 'bad'}`}><GapText gap={g} /></div>
+            ))}
+          </div>
+        ))}
+        <div className="coverage-row">
+          <span />
+          <div className="meter-legend" style={{ marginTop: -6 }}><span>{dateLabel(new Date(first * DAY).toISOString().slice(0, 10), true)}</span><span>Today</span></div>
+        </div>
       </div>
     </section>
   );

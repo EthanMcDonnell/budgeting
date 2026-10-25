@@ -77,6 +77,12 @@ export function addMonths(month: string, delta: number): string {
   return `${Math.floor(total / 12)}-${pad((total % 12) + 1)}`;
 }
 
+/** A YYYY-MM-DD date moved by `delta` days. */
+export function addDays(date: string, delta: number): string {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10);
+}
+
 export function monthRange(month: string): { start: string; end: string } {
   return { start: `${month}-01`, end: `${addMonths(month, 1)}-01` };
 }

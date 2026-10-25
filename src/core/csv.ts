@@ -49,6 +49,8 @@ export interface ParsedCsv {
   /** accountNumber is set when the file has an account number column (Bankwest's export can cover several accounts). */
   transactions: (IncomingTransaction & { accountNumber?: string })[];
   skippedRows: { line: number; reason: string }[];
+  /** Pending card authorisations: not imported, as they reappear as normal transactions under the same date once they settle. */
+  pending: { line: number; date: string; description: string; amount: number; accountNumber?: string }[];
 }
 
 function norm(h: string) {
@@ -108,6 +110,7 @@ export function parseBankCsv(text: string): ParsedCsv {
 
   const transactions: ParsedCsv['transactions'] = [];
   const skippedRows: ParsedCsv['skippedRows'] = [];
+  const pending: ParsedCsv['pending'] = [];
   const accountNumbers = new Set<string>();
 
   dataRows.forEach((r, i) => {
@@ -131,20 +134,19 @@ export function parseBankCsv(text: string): ParsedCsv {
 
     let description = get('description');
     const type = get('type');
-    // Pending card authorisations reappear as normal transactions once they settle.
+    const acct = get('accountNumber');
     if (type.toUpperCase() === 'DAU' || /^AUTHORISATION ONLY\b/i.test(description)) {
-      skippedRows.push({ line, reason: 'Pending authorisation; imported once it settles' });
+      pending.push({ line, date, description, amount, ...(acct && { accountNumber: acct }) });
       return;
     }
     if (!description) description = type || 'Unknown';
-    const acct = get('accountNumber');
     if (acct) accountNumbers.add(acct);
 
     const balance = parseMoney(get('balance'));
     transactions.push({ date, description, amount, balance, merchant: get('merchant') || null, ...(acct && { accountNumber: acct }) });
   });
 
-  return { format, columns, accountNumbers: [...accountNumbers], transactions, skippedRows };
+  return { format, columns, accountNumbers: [...accountNumbers], transactions, skippedRows, pending };
 }
 
 function guessHeaderless(rows: string[][]): Partial<Record<Field, number>> {
