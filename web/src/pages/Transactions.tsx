@@ -166,6 +166,7 @@ export default function Transactions({ meta }: { meta: Meta | null }) {
                       <div className="desc-main">
                         {t.payee_id ? <Link to={payeeHref(t.payee_id, t.payee_kind)} className="plain-link">{t.merchant}</Link> : t.description}
                         <SplitMark t={t} />
+                        {t.pending ? <span className="badge pending-badge" title="Still pending at the bank. It's replaced by the settled version on a later import, keeping its category">Pending</span> : null}
                         {t.recurring && <Repeat size={12} className="muted" style={{ marginLeft: 6, verticalAlign: -1 }} aria-label={`Recurring: ${t.recurring}`}><title>{`Recurring: ${t.recurring}`}</title></Repeat>}
                       </div>
                       {(t.merchant || t.notes || t.memo) && (

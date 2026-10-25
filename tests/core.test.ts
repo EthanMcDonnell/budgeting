@@ -6,6 +6,7 @@ import { coverage } from '../src/core/coverage.ts';
 import { parseBankCsv, parseCsv } from '../src/core/csv.ts';
 import { importCsv, importTransactions } from '../src/core/importer.ts';
 import { budgetPlan, monthSummary, trends } from '../src/core/reports.ts';
+import { splitTransaction } from '../src/core/splits.ts';
 import * as store from '../src/core/store.ts';
 import { normalizeDate, parseMoney } from '../src/core/util.ts';
 
@@ -184,7 +185,8 @@ describe('coverage', () => {
 
     // Starting the next export on the pending date leaves no gap.
     const next = imp(row('07/09/2026', 'TRAIN', -3, 891), row('05/09/2026', 'EFTPOS PURCHASE AT CAFE', -6, 894), row('05/09/2026', 'BAKERY', -4, 900));
-    expect(next.inserted).toBe(2);
+    expect(next.inserted).toBe(1);
+    expect(next.pending.settled).toBe(1);
     expect(next.coverage.gaps).toEqual([]);
     expect(next.coverage.covered_to).toBe('2026-09-07');
   });
@@ -215,6 +217,76 @@ describe('coverage', () => {
     // A dry run leaves no record behind.
     importCsv(db, csv(row('09/09/2026', 'TRAIN', -4, 900)), { account: 'Everyday', dryRun: true });
     expect(store.listImports(db)).toHaveLength(1);
+  });
+});
+
+describe('pending', () => {
+  const HEAD = 'BSB Number,Account Number,Transaction Date,Narration,Cheque Number,Debit,Credit,Balance,Transaction Type';
+  const row = (date: string, text: string, amount: number, balance: number, type = 'WDC') =>
+    `302-162,1234567,${date},"${text}",,${amount < 0 ? amount.toFixed(2) : ''},${amount > 0 ? amount.toFixed(2) : ''},${balance.toFixed(2)},${type}`;
+  const auth = (date: string, text: string, amount: number) => row(date, `AUTHORISATION ONLY - EFTPOS PURCHASE AT ${text}`, amount, 500, 'DAU');
+  const imp = (...rows: string[]) => importCsv(db, parseBankCsv([HEAD, ...rows].join('\n')), { account: 'Everyday' })[0];
+  const tx = () => store.listTransactions(db).transactions;
+
+  it('imports pending authorisations flagged, so they count straight away', () => {
+    const r = imp(auth('12/10/2026', 'BWS    1234  SUBIACO      WAAU', -18.4), row('11/10/2026', 'GROCER', -50, 950));
+    expect(r.inserted).toBe(1);
+    expect(r.pending).toMatchObject({ added: 1, still_pending: 0, settled: 0, expired: [] });
+    const p = tx().find((t) => t.pending)!;
+    expect(p).toMatchObject({ amount_cents: -1840, balance_cents: null });
+    expect(monthSummary(db, '2026-10').totals.spent_cents).toBe(6840);
+    // The same export again changes nothing.
+    const again = imp(auth('12/10/2026', 'BWS    1234  SUBIACO      WAAU', -18.4), row('11/10/2026', 'GROCER', -50, 950));
+    expect(again.pending).toMatchObject({ added: 0, still_pending: 1 });
+    expect(tx()).toHaveLength(2);
+  });
+
+  it('settles a pending row in place, keeping what was added to it', () => {
+    imp(auth('12/10/2026', 'PRICELINE PHARMACY MT LAWMT LAWLEY   AU', -142.15), row('11/10/2026', 'GROCER', -50, 950));
+    const p = tx().find((t) => t.pending)!;
+    store.updateTransaction(db, p.id, { category: 'Shopping', merchant: 'Priceline', notes: 'Gift' }, 'ai');
+    splitTransaction(db, p.id, { shares: [{ person: 'Sam' }] });
+
+    // It settles a day later, under different text.
+    const r = imp(row('13/10/2026', 'PRICELINE PHARMACY MT LAWLEY AUS', -142.15, 807.85), row('11/10/2026', 'GROCER', -50, 950));
+    expect(r.inserted).toBe(0);
+    expect(r.pending.settled).toBe(1);
+    expect(r.possible_duplicates).toBe(0);
+    const t = store.getTransaction(db, p.id);
+    expect(t).toMatchObject({ pending: 0, date: '2026-10-13', description: 'PRICELINE PHARMACY MT LAWLEY AUS', balance_cents: 80785,
+      category: 'Shopping', merchant: 'Priceline', notes: 'Gift', split_ways: 2 });
+    expect(tx()).toHaveLength(2);
+  });
+
+  it('settles at a different amount when the merchant clearly matches', () => {
+    imp(auth('12/10/2026', 'GUZMAN Y GOMEZ - LEELEEDERVILLE     WAAU', -24.5), auth('12/10/2026', 'BAKERY LEEDERVILLE WAAU', -5));
+    // A tip changed the restaurant's amount. The other row shares only the suburb, so it isn't the bakery.
+    const r = imp(row('12/10/2026', 'GUZMAN Y GOMEZ - L LEEDERVILLE AUS', -28.5, 971.5), row('12/10/2026', 'FLORIST LEEDERVILLE AUS', -9, 962.5));
+    expect(r.pending.settled).toBe(1);
+    expect(r.inserted).toBe(1);
+    expect(tx().find((t) => t.description.startsWith('GUZMAN'))?.amount_cents).toBe(-2850);
+  });
+
+  it("doesn't bring back pending rows that have already settled", () => {
+    const old = [auth('12/10/2026', 'BWS    1234  SUBIACO      WAAU', -18.4), row('11/10/2026', 'GROCER', -50, 950)];
+    imp(...old);
+    imp(row('12/10/2026', 'BWS 12 SUBIACO AUS', -18.4, 931.6), row('11/10/2026', 'GROCER', -50, 950));
+    // The old export again: its pending row is now the settled one.
+    const r = imp(...old);
+    expect(r.pending).toMatchObject({ added: 0, settled: 0, expired: [] });
+    expect(r.rows.find((x) => x.description.startsWith('AUTH'))?.status).toBe('duplicate');
+    expect(tx()).toHaveLength(2);
+  });
+
+  it('drops a pending row that never settles once an export covers its date without it', () => {
+    imp(auth('08/10/2026', 'Digital Wallet        SYDNEY       000AU', -1), row('07/10/2026', 'GROCER', -50, 950));
+    // A statement doesn't list pending rows, so it can't tell.
+    importTransactions(db, { account: 'Everyday', source: 'pdf', transactions: [{ date: '2026-10-09', description: 'TRAIN', amount: -3 }] });
+    expect(tx().some((t) => t.pending)).toBe(true);
+    const r = imp(row('09/10/2026', 'TRAIN', -3, 943.5), row('08/10/2026', 'BAKERY', -3.5, 946.5));
+    expect(r.pending.settled).toBe(0);
+    expect(r.pending.expired).toMatchObject([{ date: '2026-10-08', amount_cents: -100 }]);
+    expect(tx().some((t) => t.pending)).toBe(false);
   });
 });
 

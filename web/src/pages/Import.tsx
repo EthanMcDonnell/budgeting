@@ -5,14 +5,15 @@ import { CopyBlock, ErrorNotice, useAction } from '../components/ui.tsx';
 import { dateLabel, money, todayIso } from '../format.ts';
 
 interface PreviewRow {
-  index: number; status: 'new' | 'duplicate' | 'possible_duplicate' | 'invalid'; date: string | null; description: string;
+  index: number; status: 'new' | 'duplicate' | 'possible_duplicate' | 'invalid' | 'pending' | 'still_pending' | 'settles'; date: string | null; description: string;
   amount_cents: number; category: string | null; category_source: 'given' | 'rule' | null; merchant: string | null; error?: string;
   account: string;
 }
 interface CsvResult {
   dry_run: boolean; account: string; accounts: { account: string; new: number }[]; inserted: number; duplicates: number; possible_duplicates: number;
   invalid: number; uncategorized: number; period: { start: string | null; end: string | null }; rows: PreviewRow[];
-  format: string; skipped_rows: { line: number; reason: string }[]; pending: number;
+  format: string; skipped_rows: { line: number; reason: string }[];
+  pending: { added: number; settled: number; expired: { id: number; date: string; description: string; amount_cents: number; merchant: string | null }[] };
   gaps: (Gap & { account: string })[]; next_export_from: { account: string; date: string | null }[];
 }
 interface Gap { from: string; to: string; missing_cents: number | null }
@@ -25,7 +26,12 @@ interface ImportRow {
   inserted: number; skipped: number; created_at: string; tx_count: number;
 }
 
-const STATUS_LABEL = { new: 'New', duplicate: 'Already imported', possible_duplicate: 'Possible duplicate', invalid: 'Unreadable' };
+const STATUS_LABEL = {
+  new: 'New', duplicate: 'Already imported', possible_duplicate: 'Possible duplicate', invalid: 'Unreadable',
+  pending: 'Pending', still_pending: 'Already imported (still pending)', settles: 'Settles a pending transaction',
+};
+/** Rows the import adds or changes. */
+const ACTIVE = new Set<PreviewRow['status']>(['new', 'pending', 'settles']);
 
 export default function Import({ meta }: { meta: Meta | null }) {
   const imports = useApi<ImportRow[]>('/imports');
@@ -143,11 +149,13 @@ function CsvImport({ meta }: { meta: Meta | null }) {
       const res = await send(file, true);
       if (!res) throw new Error(error ?? 'Import failed');
       return res;
-    }, (r) => `Imported ${r.inserted} transactions into ${r.account}${r.uncategorized ? ` — ${r.uncategorized} need a category` : ''}`);
+    }, (r) => `Imported ${r.inserted + r.pending.added} transactions into ${r.account}${r.pending.settled ? `, settled ${r.pending.settled} pending` : ''}${r.uncategorized ? ` — ${r.uncategorized} need a category` : ''}`);
     if (r) { setFile(null); setPreview(null); }
   };
 
   const shown = preview?.rows.slice(0, 200) ?? [];
+  const changes = preview ? preview.inserted + preview.pending.added + preview.pending.settled + preview.pending.expired.length
+    + (includePossible ? preview.possible_duplicates : 0) : 0;
 
   return (
     <section className="panel">
@@ -188,7 +196,8 @@ function CsvImport({ meta }: { meta: Meta | null }) {
               {preview.duplicates > 0 && <span className="badge"><i className="status-dot status-duplicate" />{preview.duplicates} already imported</span>}
               {preview.possible_duplicates > 0 && <span className="badge"><i className="status-dot status-possible_duplicate" />{preview.possible_duplicates} possible duplicates</span>}
               {preview.invalid + preview.skipped_rows.length > 0 && <span className="badge"><i className="status-dot status-invalid" />{preview.invalid + preview.skipped_rows.length} unreadable</span>}
-              {preview.pending > 0 && <span className="badge" title="Card authorisations still pending. They come in with a later export once they settle">{preview.pending} pending</span>}
+              {preview.pending.added > 0 && <span className="badge" title="Card purchases the bank hasn't settled yet. They count now, and a later import settles them"><i className="status-dot status-pending" />{preview.pending.added} pending</span>}
+              {preview.pending.settled > 0 && <span className="badge"><i className="status-dot status-settles" />{preview.pending.settled} settle pending ones</span>}
               {preview.accounts.length > 1 && <span className="muted">{preview.accounts.map((a) => `${a.account}: ${a.new} new`).join(' · ')}</span>}
               {preview.period.start && <span className="muted">{dateLabel(preview.period.start, true)} – {dateLabel(preview.period.end!, true)}</span>}
             </div>
@@ -198,9 +207,15 @@ function CsvImport({ meta }: { meta: Meta | null }) {
                 <span>{g.account}: <GapText gap={g} />. Export from {dateLabel(g.from, true)} to fill it.</span>
               </div>
             ))}
-            {preview.pending > 0 && preview.next_export_from.some((n) => n.date) && (
+            {preview.pending.expired.length > 0 && (
               <p className="muted" style={{ fontSize: 13 }}>
-                Pending purchases settle under their own date, so start the next export from{' '}
+                {preview.pending.expired.length === 1 ? 'A pending purchase never settled and will be removed' : `${preview.pending.expired.length} pending purchases never settled and will be removed`}:{' '}
+                {preview.pending.expired.map((e) => `${e.merchant ?? e.description} ${money(Math.abs(e.amount_cents))} (${dateLabel(e.date)})`).join(', ')}.
+              </p>
+            )}
+            {preview.pending.added > 0 && preview.next_export_from.some((n) => n.date) && (
+              <p className="muted" style={{ fontSize: 13 }}>
+                So the pending ones settle, start the next export from{' '}
                 {preview.next_export_from.filter((n) => n.date).map((n) => `${dateLabel(n.date!, true)}${preview.next_export_from.length > 1 ? ` (${n.account})` : ''}`).join(', ')}.
               </p>
             )}
@@ -215,7 +230,7 @@ function CsvImport({ meta }: { meta: Meta | null }) {
                 <thead><tr><th>Date</th><th>Description</th><th className="hide-sm">Category</th><th className="num">Amount</th></tr></thead>
                 <tbody>
                   {shown.map((r) => (
-                    <tr key={`${r.account}-${r.index}`} style={r.status === 'new' ? undefined : { opacity: 0.6 }}>
+                    <tr key={`${r.account}-${r.index}`} style={ACTIVE.has(r.status) ? undefined : { opacity: 0.6 }}>
                       <td className="num" style={{ whiteSpace: 'nowrap' }}>
                         <i className={`status-dot status-${r.status}`} title={STATUS_LABEL[r.status]} style={{ marginRight: 6 }} />
                         {r.date ? dateLabel(r.date) : '—'}
@@ -227,7 +242,7 @@ function CsvImport({ meta }: { meta: Meta | null }) {
                         {r.status !== 'new' && <div className="desc-sub">{r.error ?? STATUS_LABEL[r.status]}</div>}
                       </td>
                       <td className={`hide-sm ${r.category ? 'ink-2' : 'warn'}`}>{r.category ?? 'Uncategorised'}</td>
-                      <td className={`num ${r.amount_cents > 0 ? 'amount-in' : ''}`}>{Number.isFinite(r.amount_cents) ? `${r.amount_cents > 0 ? '+' : '−'}${money(Math.abs(r.amount_cents))}` : '—'}</td>
+                      <td className={`num ${r.amount_cents > 0 ? 'amount-in' : ''}`} style={{ whiteSpace: 'nowrap' }}>{Number.isFinite(r.amount_cents) ? `${r.amount_cents > 0 ? '+' : '−'}${money(Math.abs(r.amount_cents))}` : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -235,8 +250,8 @@ function CsvImport({ meta }: { meta: Meta | null }) {
             </div>
             {preview.rows.length > shown.length && <p className="muted">Showing the first {shown.length} of {preview.rows.length} rows.</p>}
             <div className="row">
-              <button className="btn btn-primary" onClick={commit} disabled={busy || (preview.inserted === 0 && !(includePossible && preview.possible_duplicates))}>
-                Import {preview.inserted + (includePossible ? preview.possible_duplicates : 0)} transactions
+              <button className="btn btn-primary" onClick={commit} disabled={busy || changes === 0}>
+                Import {changes} transaction{changes === 1 ? '' : 's'}
               </button>
               <button className="btn" onClick={() => { setFile(null); setPreview(null); }}>Cancel</button>
               {preview.uncategorized > 0 && <span className="muted">{preview.uncategorized} won't have a category yet — categorise after, or ask Claude.</span>}

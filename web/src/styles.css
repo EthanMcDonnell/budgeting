@@ -520,6 +520,10 @@ dialog.modal::backdrop { background: rgba(10, 12, 16, 0.45); }
 .status-duplicate { background: var(--series-muted); }
 .status-possible_duplicate { background: var(--warn); }
 .status-invalid { background: var(--bad); }
+.status-pending { background: var(--warn); }
+.status-settles { background: var(--accent); }
+.status-still_pending { background: var(--series-muted); }
+.pending-badge { margin-left: 6px; vertical-align: 1px; font-size: 11px; padding: 0 6px; color: var(--warn-ink); border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); }
 .recon-ok { color: var(--good-ink); }
 
 .settings-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }

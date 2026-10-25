@@ -238,6 +238,11 @@ const MIGRATIONS: (string | ((db: DB) => void))[] = [
   -- only covers the days before it.
   ALTER TABLE imports ADD COLUMN pending_from TEXT;
   `,
+  `
+  -- A card authorisation the bank hasn't settled yet. It counts like any other transaction; a later import replaces
+  -- it with the settled version (keeping its category, payee, notes and links) or drops it if it never settles.
+  ALTER TABLE transactions ADD COLUMN pending INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function openDb(file: string = DEFAULT_DB_PATH): DB {

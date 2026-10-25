@@ -36,6 +36,8 @@ export interface Transaction {
   categorized_by: 'rule' | 'ai' | 'user' | null; notes: string | null; source: string; import_id: number | null;
   /** What the other person wrote on it (transfer message, Beem memo), word for word. `notes` is ours. */
   memo: string | null;
+  /** 1 while the bank still shows it as a pending authorisation. */
+  pending: number;
   recurring_id: number | null; recurring: string | null; contributor_id: number | null; contributor: string | null;
   /** Money out shared with others: its split, how many ways, and what people still owe on it (flagged until they pay). */
   split_id: number | null; split_ways: number | null; split_owed_cents: number | null;
@@ -414,7 +416,7 @@ const TX_SELECT = `
   SELECT t.id, t.account_id, a.name AS account, t.date, t.description, p.name AS merchant, t.payee_id,
          p.kind AS payee_kind, t.amount_cents,
          t.balance_cents, t.category_id, c.name AS category, c.kind AS category_kind,
-         t.categorized_by, t.notes, t.memo, t.source, t.import_id, t.recurring_id, r.name AS recurring,
+         t.categorized_by, t.notes, t.memo, t.source, t.import_id, t.pending, t.recurring_id, r.name AS recurring,
          t.contributor_id, rc.name AS contributor,
          s.id AS split_id, (SELECT COUNT(*) + 1 FROM split_shares ss WHERE ss.split_id = s.id) AS split_ways,
          (SELECT SUM(MAX(ss.amount_cents - COALESCE((SELECT SUM(sp.amount_cents) FROM split_payments sp WHERE sp.share_id = ss.id), 0), 0))

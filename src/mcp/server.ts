@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { openDb } from '../core/db.ts';
 import { coverage, type CoverageGap } from '../core/coverage.ts';
 import { parseBankCsv } from '../core/csv.ts';
-import { importCsv, importTransactions } from '../core/importer.ts';
+import { importCsv, importTransactions, type ImportResult } from '../core/importer.ts';
 import * as recurring from '../core/recurring.ts';
 import { listPayees, payeeDetail } from '../core/payees.ts';
 import { budgetPlan, monthSummary, overview, trends, type BucketTarget } from '../core/reports.ts';
@@ -75,7 +75,7 @@ const dollars = (c: number | null | undefined) => (c == null ? null : fromCents(
 
 const txOut = (t: store.Transaction) => ({
   id: t.id, date: t.date, account: t.account, description: t.description, merchant: t.merchant,
-  ...(t.payee_kind === 'person' ? { person: true } : {}),
+  ...(t.payee_kind === 'person' ? { person: true } : {}), ...(t.pending ? { pending: true } : {}),
   amount: fromCents(t.amount_cents), category: t.category, categorized_by: t.categorized_by, ...(t.memo ? { memo: t.memo } : {}), notes: t.notes,
   recurring: t.recurring, from: t.contributor,
   ...(t.split_id != null ? { split_id: t.split_id, split_ways: t.split_ways, ...(t.split_owed_cents ? { still_owed: dollars(t.split_owed_cents) } : {}) } : {}),
@@ -110,6 +110,10 @@ const gapOut = (g: CoverageGap) => ({
   from: g.from, to: g.to,
   ...(g.missing_cents == null ? { checked: false, note: 'No balances to check: may be quiet, or transactions may be missing' } : { missing: fromCents(g.missing_cents) }),
 });
+const pendingOut = (p: ImportResult['pending']) => ({
+  added: p.added, still_pending: p.still_pending, settled: p.settled,
+  expired: p.expired.map(({ amount_cents, ...x }) => ({ ...x, amount: fromCents(amount_cents) })),
+});
 const coverageOut = (c: { covered_to: string | null; next_export_from: string | null; gaps: CoverageGap[] }) =>
   ({ covered_to: c.covered_to, next_export_from: c.next_export_from, gaps: c.gaps.map(gapOut) });
 
@@ -143,9 +147,10 @@ verify every line was captured. Run with dry_run=true first and check the reconc
       openingBalance: a.opening_balance, closingBalance: a.closing_balance,
       possibleDuplicates: a.possible_duplicates, dryRun: a.dry_run, categorizedBy: 'ai',
     });
-    const { rows, coverage: cov, ...rest } = r;
+    const { rows, coverage: cov, pending, ...rest } = r;
     return {
       ...rest,
+      pending: pendingOut(pending),
       coverage: coverageOut(cov),
       invalid_rows: rows.filter((x) => x.status === 'invalid'),
       duplicate_rows: rows.filter((x) => x.status === 'duplicate' || x.status === 'possible_duplicate')
@@ -154,7 +159,7 @@ verify every line was captured. Run with dry_run=true first and check the reconc
   });
 
 tool('import_csv_file',
-  'Imports a CSV transaction export (Bankwest Online Banking export, or any CSV with date/description/amount or debit/credit columns) from a local file path. Rows with an account number go into the account with that number, so a full Bankwest export covering several accounts imports in one go (one result per account). Rules categorise what they can.',
+  'Imports a CSV transaction export (Bankwest Online Banking export, or any CSV with date/description/amount or debit/credit columns) from a local file path. Rows with an account number go into the account with that number, so a full Bankwest export covering several accounts imports in one go (one result per account). Rules categorise what they can. Pending card authorisations are imported flagged pending (categorise them like any other); a later import replaces each with its settled version, keeping its category, payee, notes and splits, or drops it as expired if it never settled.',
   {
     path: z.string().describe('Absolute path to the CSV, ~ allowed'),
     account: z.string().optional().describe('Account name (created if new) for rows whose account number no account has yet, or for files without account numbers. The number is remembered on it'),
@@ -167,15 +172,16 @@ tool('import_csv_file',
     const results = importCsv(db, parsed, {
       account: a.account, label: path.basename(file), possibleDuplicates: a.possible_duplicates, dryRun: a.dry_run,
     });
-    const numbers = new Map(store.listAccounts(db).filter((x) => x.number).map((x) => [x.number!.replace(/\D/g, ''), x.name]));
-    const accountFor = (n?: string) => (n ? [...numbers].find(([num]) => num.endsWith(n.replace(/\D/g, '')))?.[1] ?? n : undefined);
+    const brief = (x: ImportResult['rows'][number]) => ({ index: x.index, date: x.date, description: x.description, amount: x.amount_cents / 100 });
     return {
       format: parsed.format, unreadable_rows: parsed.skippedRows,
-      pending: parsed.pending.map((p) => ({ date: p.date, description: p.description, amount: p.amount, account: accountFor(p.accountNumber) })),
-      imports: results.map(({ rows, coverage: cov, ...rest }) => ({
+      imports: results.map(({ rows, coverage: cov, pending, ...rest }) => ({
         ...rest,
+        pending: pendingOut(pending),
         coverage: coverageOut(cov),
-        duplicate_rows: rows.filter((x) => x.status !== 'new').map((x) => ({ index: x.index, status: x.status, date: x.date, description: x.description, amount: x.amount_cents / 100 })),
+        duplicate_rows: rows.filter((x) => x.status === 'duplicate' || x.status === 'possible_duplicate').map((x) => ({ ...brief(x), status: x.status })),
+        pending_rows: rows.filter((x) => x.status === 'pending').map(brief),
+        settled_rows: rows.filter((x) => x.status === 'settles').map((x) => ({ ...brief(x), settles_id: x.matches_id })),
       })),
     };
   });

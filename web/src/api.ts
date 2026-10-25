@@ -28,6 +28,8 @@ export interface Transaction {
   /** What the other person wrote on it, word for word. */
   memo: string | null;
   source: string; import_id: number | null; recurring_id: number | null; recurring: string | null;
+  /** 1 while the bank still shows it as a pending authorisation. */
+  pending: number;
   contributor_id: number | null; contributor: string | null;
   split_id: number | null; split_ways: number | null; split_owed_cents: number | null; payback_split_id: number | null; payback_for: string | null;
 }

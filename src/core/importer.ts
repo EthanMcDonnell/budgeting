@@ -34,11 +34,16 @@ export interface ImportOptions {
   closingBalance?: number | null;
   /** Who chose the categories supplied in `transactions`. */
   categorizedBy?: 'ai' | 'user';
-  /** Earliest pending authorisation the file left out (see ParsedCsv.pending): the import covers only the days before it. */
-  pendingFrom?: string | null;
+  /**
+   * The card authorisations the bank still shows as pending (see ParsedCsv.pending), when the file lists them. They're
+   * stored flagged as pending. Stored pending rows are replaced by their settled version when one arrives, and dropped
+   * when the file covers their date without listing them. Left out (a PDF statement), pending rows only settle.
+   */
+  pending?: IncomingTransaction[];
 }
 
-export type RowStatus = 'new' | 'duplicate' | 'possible_duplicate' | 'invalid';
+/** `pending`: a new pending authorisation. `still_pending`: one already stored. `settles`: the settled version of a stored pending row (`matches_id`). */
+export type RowStatus = 'new' | 'duplicate' | 'possible_duplicate' | 'invalid' | 'pending' | 'still_pending' | 'settles';
 
 export interface PreviewRow {
   index: number;
@@ -71,12 +76,16 @@ export interface ImportResult {
     statement_net: number; difference: number; ok: boolean;
   };
   rows: PreviewRow[];
+  /** Pending authorisations: added, already stored, settled by a row in this file, and dropped as they never settled. */
+  pending: { added: number; still_pending: number; settled: number; expired: ExpiredPending[] };
   /** What the account's imports cover with this one included. `gaps` are only those next to this file's dates. */
   coverage: { covered_to: string | null; next_export_from: string | null; gaps: CoverageGap[] };
 }
 
+export interface ExpiredPending { id: number; date: string; description: string; amount_cents: number; category: string | null; merchant: string | null }
+
 export function importTransactions(db: DB, opts: ImportOptions): ImportResult {
-  if (!Array.isArray(opts.transactions) || opts.transactions.length === 0) {
+  if (!Array.isArray(opts.transactions) || opts.transactions.length + (opts.pending?.length ?? 0) === 0) {
     throw new UserError('No transactions to import');
   }
   const run = () => doImport(db, opts);
@@ -101,12 +110,10 @@ const ROLLBACK = Symbol('rollback');
  * such number per file), and remembers the number on that account for next time.
  */
 export function importCsv(db: DB, parsed: ParsedCsv, opts: Omit<ImportOptions, 'source' | 'transactions'>): ImportResult[] {
-  const groups = new Map<string, IncomingTransaction[]>();
-  for (const { accountNumber = '', ...t } of parsed.transactions) {
-    if (!groups.has(accountNumber)) groups.set(accountNumber, []);
-    groups.get(accountNumber)!.push(t);
-  }
-  const pendingFrom = (n: string) => parsed.pending.filter((p) => (p.accountNumber ?? '') === n).map((p) => p.date).sort()[0] ?? null;
+  const groups = new Map<string, { transactions: IncomingTransaction[]; pending: IncomingTransaction[] }>();
+  const group = (n: string) => groups.get(n) ?? groups.set(n, { transactions: [], pending: [] }).get(n)!;
+  for (const { accountNumber = '', ...t } of parsed.transactions) group(accountNumber).transactions.push(t);
+  for (const { accountNumber = '', line: _l, ...t } of parsed.pending) group(accountNumber).pending.push(t);
   const digits = (s: string) => s.replace(/\D/g, '');
   const accounts = listAccounts(db);
   const owner = (n: string) => (n ? accounts.find((a) => a.number && digits(a.number).endsWith(digits(n))) : undefined);
@@ -118,9 +125,9 @@ export function importCsv(db: DB, parsed: ParsedCsv, opts: Omit<ImportOptions, '
   if (unknown[0] && chosen?.number) {
     throw new UserError(`These rows are for account number ${unknown[0]}, but ${chosen.name} is ${chosen.number}. Choose another account or a new one.`);
   }
-  const run = () => [...groups].map(([n, transactions]) => {
+  const run = () => [...groups].map(([n, { transactions, pending }]) => {
     const target = owner(n);
-    const r = importTransactions(db, { ...opts, account: target?.id ?? opts.account, source: 'csv', transactions, pendingFrom: pendingFrom(n) });
+    const r = importTransactions(db, { ...opts, account: target?.id ?? opts.account, source: 'csv', transactions, pending });
     const into = !target && n && !r.dry_run ? findAccount(db, r.account) : null;
     if (into && !into.number) updateAccount(db, into.id, { number: n });
     return r;
@@ -133,8 +140,7 @@ function doImport(db: DB, opts: ImportOptions): ImportResult {
   const rules = compileRules(listRules(db));
   const unknownCategories = new Set<string>();
 
-  const rows: (PreviewRow & { category_id: number | null; payee_id: number | null; balance_cents: number | null; notes: string | null; memo: string | null })[] =
-    opts.transactions.map((t, index) => {
+  const prepare = (t: IncomingTransaction, index: number): Row => {
       const date = normalizeDate(String(t.date ?? ''));
       const description = String(t.description ?? '').replace(/\s+/g, ' ').trim();
       let amountCents = NaN;
@@ -166,7 +172,11 @@ function doImport(db: DB, opts: ImportOptions): ImportResult {
       if (payee) { base.merchant = payee.name; base.payee_id = payee.id; }
       else if (hit.payee) { base.merchant = hit.payee.merchant; base.payee_id = hit.payee.payee_id; }
       return { ...base, status: 'new' as const };
-    });
+    };
+  const rows = opts.transactions.map(prepare);
+  // Pending rows follow the file's settled ones. Their balance is the available balance, not the running one.
+  const pendingRows = (opts.pending ?? []).map((t, i) => prepare({ ...t, balance: null }, opts.transactions.length + i));
+  for (const r of pendingRows) if (r.status === 'new') r.status = 'pending';
 
   // Duplicate detection against what's already stored for this account. Each stored row can
   // absorb at most one incoming row, so two genuine identical purchases on one day both survive.
@@ -176,7 +186,7 @@ function doImport(db: DB, opts: ImportOptions): ImportResult {
   const end = dates[dates.length - 1] ?? null;
   if (start && end) {
     const existing = db
-      .prepare('SELECT id, date, amount_cents, dedupe_key FROM transactions WHERE account_id = ? AND date BETWEEN ? AND ?')
+      .prepare('SELECT id, date, amount_cents, dedupe_key FROM transactions WHERE account_id = ? AND pending = 0 AND date BETWEEN ? AND ?')
       .all(account.id, start, end) as { id: number; date: string; amount_cents: number; dedupe_key: string }[];
     const used = new Set<number>();
     const byKey = new Map<string, number[]>();
@@ -203,8 +213,37 @@ function doImport(db: DB, opts: ImportOptions): ImportResult {
     }
   }
 
+  // Stored pending rows: settled by a row in this file, still pending in it, or gone.
+  const stored = db.prepare(`SELECT t.id, t.date, t.description, t.amount_cents, t.dedupe_key, t.category_id, t.categorized_by,
+      t.payee_id, t.notes, c.name AS category, p.name AS merchant
+    FROM transactions t LEFT JOIN categories c ON c.id = t.category_id LEFT JOIN payees p ON p.id = t.payee_id
+    WHERE t.account_id = ? AND t.pending = 1`).all(account.id) as StoredPending[];
+  const settles = matchSettled(stored, valid.filter((r) => r.status === 'new'));
+  for (const [p, r] of settles) { r.status = 'settles'; r.matches_id = p.id; }
+  const open = stored.filter((p) => !settles.some(([s]) => s === p));
+  for (const r of pendingRows) {
+    if (r.status !== 'pending') continue;
+    const p = open.find((x) => x.dedupe_key === dedupeKey(account.id, r.date!, r.amount_cents, r.description));
+    if (p) { r.status = 'still_pending'; r.matches_id = p.id; open.splice(open.indexOf(p), 1); }
+  }
+  // A pending row that has already settled (an old export imported again) isn't new.
+  const fresh = pendingRows.filter((r) => r.status === 'pending');
+  if (fresh.length) {
+    const dates = fresh.map((r) => r.date!).sort();
+    const settledRows = db.prepare('SELECT id, date, description, amount_cents FROM transactions WHERE account_id = ? AND pending = 0 AND date BETWEEN ? AND ?')
+      .all(account.id, dates[0], addDays(dates[dates.length - 1], 4)) as { id: number; date: string; description: string; amount_cents: number }[];
+    for (const [r, t] of matchSettled(fresh, [...settledRows, ...valid])) {
+      r.status = 'duplicate';
+      if ('id' in t) r.matches_id = t.id;
+    }
+  }
+  // A file that lists what's pending and covers a stored pending row's date without it: it never settled.
+  const listed = [...valid, ...pendingRows.filter((r) => r.status !== 'invalid')].map((r) => r.date!).sort();
+  const expired = opts.pending ? open.filter((p) => p.date >= listed[0] && p.date <= listed[listed.length - 1]) : [];
+
   const importPossible = opts.possibleDuplicates === 'import';
-  const toInsert = rows.filter((r) => r.status === 'new' || (importPossible && r.status === 'possible_duplicate'));
+  const toInsert = [...rows.filter((r) => r.status === 'new' || (importPossible && r.status === 'possible_duplicate')),
+    ...pendingRows.filter((r) => r.status === 'pending')];
 
   let reconciliation: ImportResult['reconciliation'] = null;
   if (opts.openingBalance != null && opts.closingBalance != null) {
@@ -220,13 +259,13 @@ function doImport(db: DB, opts: ImportOptions): ImportResult {
 
   let importId: number | null = null;
   const categorizedBy = opts.categorizedBy ?? (opts.source === 'csv' ? 'user' : 'ai');
-  const pendingFrom = opts.pendingFrom ?? null;
+  const pendingFrom = pendingRows.filter((r) => r.status !== 'invalid').map((r) => r.date!).sort()[0] ?? null;
   // Every import is recorded, even one that adds nothing, so the history shows which dates have been checked.
   // A re-import of dates already covered adds nothing to that, so it's left out.
   const before = start && end ? accountCoverage(db, account.id, account.name) : null;
   const span = start && end ? coveredSpan({ period_start: start, period_end: end, pending_from: pendingFrom }) : null;
   const alreadyCovered = !!span && (span.end < span.start || before!.segments.some((g) => g.start <= span.start && span.end <= g.end));
-  if (span && (toInsert.length > 0 || !alreadyCovered)) {
+  if (toInsert.length > 0 || settles.length > 0 || (span && !alreadyCovered)) {
     importId = Number(
       db.prepare(`INSERT INTO imports (source, label, account_id, period_start, period_end, pending_from, inserted, skipped)
                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -234,21 +273,33 @@ function doImport(db: DB, opts: ImportOptions): ImportResult {
         .lastInsertRowid,
     );
   }
+  const ids: number[] = [];
+  const by = (r: Row) => (r.category_id == null ? null : r.category_source === 'rule' ? 'rule' : categorizedBy);
   if (toInsert.length > 0) {
     const ins = db.prepare(`INSERT INTO transactions (account_id, date, description, payee_id, amount_cents,
-        balance_cents, category_id, categorized_by, notes, memo, source, import_id, dedupe_key)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    const ids: number[] = [];
+        balance_cents, category_id, categorized_by, notes, memo, source, import_id, dedupe_key, pending)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const r of toInsert) {
-      ids.push(Number(ins.run(account.id, r.date, r.description, r.payee_id, r.amount_cents, r.balance_cents, r.category_id,
-        r.category_id == null ? null : r.category_source === 'rule' ? 'rule' : categorizedBy,
-        r.notes, r.memo, opts.source, importId, dedupeKey(account.id, r.date!, r.amount_cents, r.description)).lastInsertRowid));
+      ids.push(Number(ins.run(account.id, r.date, r.description, r.payee_id, r.amount_cents, r.balance_cents, r.category_id, by(r),
+        r.notes, r.memo, opts.source, importId, dedupeKey(account.id, r.date!, r.amount_cents, r.description),
+        r.status === 'pending' ? 1 : 0).lastInsertRowid));
     }
-    fillMemos(db, ids);
-    linkRecurring(db, ids);
   }
+  // The settled version takes over the pending row, so its category, payee, notes, splits and links stay. A category
+  // someone chose wins over what rules make of the new text.
+  const settle = db.prepare(`UPDATE transactions SET date = ?, description = ?, amount_cents = ?, balance_cents = ?, dedupe_key = ?,
+      pending = 0, category_id = ?, categorized_by = ?, payee_id = ?, notes = ? WHERE id = ?`);
+  for (const [p, r] of settles) {
+    const chosen = p.categorized_by === 'ai' || p.categorized_by === 'user' || r.category_id == null;
+    settle.run(r.date, r.description, r.amount_cents, r.balance_cents, dedupeKey(account.id, r.date!, r.amount_cents, r.description),
+      chosen ? p.category_id : r.category_id, chosen ? p.categorized_by : by(r), p.payee_id ?? r.payee_id, p.notes ?? r.notes, p.id);
+    ids.push(p.id);
+  }
+  if (expired.length) db.prepare(`DELETE FROM transactions WHERE id IN (${expired.map(() => '?').join(',')})`).run(...expired.map((p) => p.id));
+  fillMemos(db, ids);
+  linkRecurring(db, ids);
 
-  const count = (s: RowStatus) => rows.filter((r) => r.status === s).length;
+  const count = (s: RowStatus) => [...rows, ...pendingRows].filter((r) => r.status === s).length;
   const after = accountCoverage(db, account.id, account.name);
   // Gaps that touch this file's dates: the ones it may have opened or failed to close.
   const near = span && { from: addDays(span.start, -1), to: addDays(span.end, 1) };
@@ -258,7 +309,7 @@ function doImport(db: DB, opts: ImportOptions): ImportResult {
     import_id: opts.dryRun ? null : importId,
     account: account.name,
     account_created: created,
-    inserted: toInsert.length,
+    inserted: toInsert.filter((r) => r.status !== 'pending').length,
     duplicates: count('duplicate'),
     possible_duplicates: count('possible_duplicate'),
     possible_duplicates_skipped: !importPossible,
@@ -267,9 +318,58 @@ function doImport(db: DB, opts: ImportOptions): ImportResult {
     unknown_categories: [...unknownCategories],
     period: { start, end },
     reconciliation,
+    pending: {
+      added: count('pending'), still_pending: count('still_pending'), settled: settles.length,
+      expired: expired.map(({ id, date, description, amount_cents, category, merchant }) => ({ id, date, description, amount_cents, category, merchant })),
+    },
     coverage: { covered_to: after.covered_to, next_export_from: after.next_export_from, gaps },
-    rows: rows.map(({ category_id: _c, payee_id: _p, balance_cents: _b, notes: _n, ...r }) => r),
+    rows: [...rows, ...pendingRows].map(({ category_id: _c, payee_id: _p, balance_cents: _b, notes: _n, ...r }) => r),
   };
+}
+
+type Row = PreviewRow & { category_id: number | null; payee_id: number | null; balance_cents: number | null; notes: string | null; memo: string | null };
+
+type Dated = { date: string | null; description: string; amount_cents: number };
+
+type StoredPending = {
+  id: number; date: string; description: string; amount_cents: number; dedupe_key: string;
+  category_id: number | null; categorized_by: Row['category_source'] | 'ai' | 'user' | null; payee_id: number | null; notes: string | null;
+  category: string | null; merchant: string | null;
+};
+
+/**
+ * Pairs stored pending rows with their settled version among the new rows. The bank rewrites the text ("AUTHORISATION
+ * ONLY - EFTPOS PURCHASE AT BWS 1234 SUBIACO WAAU" settles as "BWS 12 SUBIACO AUS"), usually under the
+ * same date but sometimes a few days later, and the amount can change (tips, fuel, holds). So a pair needs the same amount
+ * and a word in common (or the same day), or two words in common; exact amounts win, then more words, then the nearest date.
+ */
+function matchSettled<P extends Dated, R extends Dated>(stored: P[], rows: R[]): [P, R][] {
+  const options: { p: P; r: R; rank: number[] }[] = [];
+  for (const p of stored) {
+    const pw = merchantWords(p.description);
+    for (const r of rows) {
+      const days = (Date.parse(r.date!) - Date.parse(p.date!)) / 86_400_000;
+      if (days < 0 || days > 4 || Math.sign(r.amount_cents) !== Math.sign(p.amount_cents)) continue;
+      const rw = merchantWords(r.description);
+      const shared = pw.filter((w) => rw.some((x) => x === w || (Math.min(x.length, w.length) >= 4 && (x.startsWith(w) || w.startsWith(x))))).length;
+      const sameAmount = r.amount_cents === p.amount_cents;
+      // A changed amount needs more to go on: one word could just be the suburb.
+      if (sameAmount ? shared === 0 && days > 0 : shared < 2) continue;
+      options.push({ p, r, rank: [sameAmount ? 0 : 1, -shared, days] });
+    }
+  }
+  options.sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.rank[2] - b.rank[2]);
+  const pairs: [P, R][] = [];
+  for (const o of options) {
+    if (pairs.some(([p, r]) => p === o.p || r === o.r)) continue;
+    pairs.push([o.p, o.r]);
+  }
+  return pairs;
+}
+
+function merchantWords(description: string) {
+  return description.toUpperCase().replace(/^AUTHORISATION ONLY\s*-\s*(EFTPOS PURCHASE AT\s*)?/, '')
+    .split(/[^A-Z]+/).filter((w) => w.length >= 3 && !/^(QLD|NSW|VIC|TAS|ACT|WA|SA|NT)?(AUS?)?$/.test(w) && !['PTY', 'LTD', 'THE'].includes(w));
 }
 
 function sumOf(rows: { amount_cents: number }[]) {

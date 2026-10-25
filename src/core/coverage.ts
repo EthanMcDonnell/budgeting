@@ -67,16 +67,16 @@ export function coveredSpan(i: { period_start: string; period_end: string; pendi
 
 type BalanceRow = { amount_cents: number; balance_cents: number | null };
 
-/** Cents the running balances say are missing between `from` and `to`, or null when they can't tell. */
+/** Cents the running balances say are missing between `from` and `to`, or null when they can't tell. Pending rows have no running balance yet, so they're left out. */
 function missingAcross(db: DB, accountId: number, from: string, to: string): number | null {
-  const before = (db.prepare('SELECT MAX(date) AS d FROM transactions WHERE account_id = ? AND date < ?').get(accountId, from) as { d: string | null }).d;
-  const after = (db.prepare('SELECT MIN(date) AS d FROM transactions WHERE account_id = ? AND date > ?').get(accountId, to) as { d: string | null }).d;
+  const before = (db.prepare('SELECT MAX(date) AS d FROM transactions WHERE account_id = ? AND pending = 0 AND date < ?').get(accountId, from) as { d: string | null }).d;
+  const after = (db.prepare('SELECT MIN(date) AS d FROM transactions WHERE account_id = ? AND pending = 0 AND date > ?').get(accountId, to) as { d: string | null }).d;
   if (!before || !after) return null;
-  const day = db.prepare('SELECT amount_cents, balance_cents FROM transactions WHERE account_id = ? AND date = ?');
+  const day = db.prepare('SELECT amount_cents, balance_cents FROM transactions WHERE account_id = ? AND pending = 0 AND date = ?');
   const close = closing(day.all(accountId, before) as BalanceRow[]);
   const open = opening(day.all(accountId, after) as BalanceRow[]);
   if (close == null || open == null) return null;
-  const inside = (db.prepare('SELECT COALESCE(SUM(amount_cents), 0) AS s FROM transactions WHERE account_id = ? AND date > ? AND date < ?')
+  const inside = (db.prepare('SELECT COALESCE(SUM(amount_cents), 0) AS s FROM transactions WHERE account_id = ? AND pending = 0 AND date > ? AND date < ?')
     .get(accountId, before, after) as { s: number }).s;
   return open - close - inside;
 }

@@ -178,7 +178,7 @@ app.post('/api/import/csv', (req, res) => {
   if (!text) throw new UserError('No file contents received');
   let parsed;
   try { parsed = parseBankCsv(text); } catch (e) { throw new UserError((e as Error).message); }
-  if (parsed.transactions.length === 0) throw new UserError('No transactions found in that file');
+  if (parsed.transactions.length + parsed.pending.length === 0) throw new UserError('No transactions found in that file');
   const results = importCsv(db, parsed, {
     account, label: filename ?? 'CSV import', possibleDuplicates: possible_duplicates ?? 'skip', dryRun: !commit,
   });
@@ -192,7 +192,9 @@ app.post('/api/import/csv', (req, res) => {
     invalid: sum('invalid'), uncategorized: sum('uncategorized'),
     period: { start: dates[0] ?? null, end: dates.at(-1) ?? null },
     rows: results.flatMap((r) => r.rows.map((x) => ({ ...x, account: r.account }))),
-    format: parsed.format, skipped_rows: parsed.skippedRows, pending: parsed.pending.length,
+    format: parsed.format, skipped_rows: parsed.skippedRows,
+    pending: { added: results.reduce((n, r) => n + r.pending.added, 0), settled: results.reduce((n, r) => n + r.pending.settled, 0),
+      expired: results.flatMap((r) => r.pending.expired) },
     gaps: results.flatMap((r) => r.coverage.gaps.map((g) => ({ ...g, account: r.account }))),
     next_export_from: results.map((r) => ({ account: r.account, date: r.coverage.next_export_from })),
   });
