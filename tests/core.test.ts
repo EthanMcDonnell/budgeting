@@ -46,9 +46,9 @@ describe('csv', () => {
   it('skips pending authorisations and $0 note rows', () => {
     const p = parseBankCsv([
       'BSB Number,Account Number,Transaction Date,Narration,Cheque,Debit,Credit,Balance,Transaction Type',
-      '302-162,1234567,12/10/2026,"AUTHORISATION ONLY - EFTPOS PURCHASE AT SHOP","",280.00,,1609.72,DAU',
-      '302-162,1234567,14/09/2026,"FEES INCLUDED IN TRAN AUD34.00  IS WAIVED","",,0.00,1581.33,NAR',
-      '302-162,1234567,14/09/2026,"ANTHROPIC* CLAUDE SAN FRANCISCO CA USA","",34.00,,1547.33,WDC',
+      '302-162,1234567,07/09/2026,"AUTHORISATION ONLY - EFTPOS PURCHASE AT SHOP","",57.00,,1468.60,DAU',
+      '302-162,1234567,05/09/2026,"FEES INCLUDED IN TRAN AUD21.50  IS WAIVED","",,0.00,1468.60,NAR',
+      '302-162,1234567,05/09/2026,"ACME CLOUD SAN FRANCISCO CA USA","",21.50,,1447.10,WDC',
     ].join('\n'));
     expect(p.format).toBe('bankwest');
     expect(p.transactions).toHaveLength(1);
@@ -59,12 +59,12 @@ describe('csv', () => {
   it('reads an Up Bank export', () => {
     const p = parseBankCsv([
       '\uFEFFTime,BSB / Account Number,Account Name,Transaction Type,Payee,Description,Category,Tags,Subtotal (AUD),Currency,Subtotal (Transaction Currency),Round Up (AUD),Total (AUD),Payment Method,Settled Date',
-      '2026-10-02T03:23:23+10:00,633-123 / 123456789,Spending,International Purchase,Hamleys,"Hamleys Regent Street, London",Children & Family,"",-54.95,GBP,-27.0,0.00,-54.95,"",2026-10-04',
-      '2026-08-03T19:12:05+10:00,633-123 / 123456789,Spending,Osko Payment Received,A CITIZEN,Pizza,"","",12.50,AUD,12.50,0.00,12.50,Osko,2026-08-03',
+      '2026-05-19T14:08:41+10:00,633-123 / 123456789,Spending,International Purchase,Kinokuniya,"Kinokuniya Shinjuku, Tokyo",Books & Media,"",-38.60,JPY,-3840.0,0.00,-38.60,"",2026-05-21',
+      '2026-05-11T09:47:12+10:00,633-123 / 123456789,Spending,Osko Payment Received,J CITIZEN,Movie tickets,"","",16.00,AUD,16.00,0.00,16.00,Osko,2026-05-11',
     ].join('\n'));
     expect(p.transactions).toEqual([
-      { date: '2026-10-02', description: 'Hamleys Regent Street, London', amount: -54.95, balance: null, merchant: 'Hamleys' },
-      { date: '2026-08-03', description: 'Pizza', amount: 12.5, balance: null, merchant: 'A CITIZEN' },
+      { date: '2026-05-19', description: 'Kinokuniya Shinjuku, Tokyo', amount: -38.6, balance: null, merchant: 'Kinokuniya' },
+      { date: '2026-05-11', description: 'Movie tickets', amount: 16, balance: null, merchant: 'J CITIZEN' },
     ]);
   });
 
@@ -279,7 +279,7 @@ describe('pending', () => {
   });
 
   it('drops a pending row that never settles once an export covers its date without it', () => {
-    imp(auth('08/10/2026', 'Digital Wallet        SYDNEY       000AU', -1), row('07/10/2026', 'GROCER', -50, 950));
+    imp(auth('08/10/2026', 'PARKING KIOSK         PERTH        000AU', -1), row('07/10/2026', 'GROCER', -50, 950));
     // A statement doesn't list pending rows, so it can't tell.
     importTransactions(db, { account: 'Everyday', source: 'pdf', transactions: [{ date: '2026-10-09', description: 'TRAIN', amount: -3 }] });
     expect(tx().some((t) => t.pending)).toBe(true);
